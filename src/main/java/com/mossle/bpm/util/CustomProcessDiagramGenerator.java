@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.awt.RenderingHints;
 import java.awt.Stroke;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
@@ -47,7 +48,6 @@ import org.activiti.engine.impl.cmd.GetBpmnModelCmd;
 import org.activiti.engine.impl.cmd.GetDeploymentProcessDefinitionCmd;
 import org.activiti.engine.impl.context.Context;
 import org.activiti.engine.impl.persistence.entity.ProcessDefinitionEntity;
-import org.activiti.engine.impl.pvm.PvmTransition;
 import org.activiti.engine.impl.pvm.process.ActivityImpl;
 
 import org.apache.commons.io.FilenameUtils;
@@ -57,17 +57,17 @@ import org.apache.commons.io.FilenameUtils;
  */
 public class CustomProcessDiagramGenerator {
     public static final int OFFSET_SUBPROCESS = 5;
-    public static final int OFFSET_TASK = 20;
+    public static final int OFFSET_TASK = 10;
     private static List<String> taskType = new ArrayList<String>();
     private static List<String> eventType = new ArrayList<String>();
     private static List<String> gatewayType = new ArrayList<String>();
     private static List<String> subProcessType = new ArrayList<String>();
     private static Color RUNNING_COLOR = Color.RED;
-    private static Color HISTORY_COLOR = Color.GREEN;
+    private static Color HISTORY_COLOR = Color.decode("#337ab7");
     private static Color SKIP_COLOR = Color.GRAY;
     private static Stroke THICK_BORDER_STROKE = new BasicStroke(3.0f);
-    private int minX;
-    private int minY;
+    private int minX = 0;
+    private int minY = 0;
 
     public CustomProcessDiagramGenerator() {
         init();
@@ -112,14 +112,14 @@ public class CustomProcessDiagramGenerator {
                 processDefinitionId);
         BpmnModel bpmnModel = getBpmnModelCmd.execute(Context
                 .getCommandContext());
-        Point point = getMinXAndMinY(bpmnModel);
-        this.minX = point.x;
-        this.minY = point.y;
-        this.minX = (this.minX <= 5) ? 5 : this.minX;
-        this.minY = (this.minY <= 5) ? 5 : this.minY;
-        this.minX -= 5;
-        this.minY -= 5;
 
+        // Point point = getMinXAndMinY(bpmnModel);
+        // this.minX = point.x;
+        // this.minY = point.y;
+        // this.minX = (this.minX <= 5) ? 5 : this.minX;
+        // this.minY = (this.minY <= 5) ? 5 : this.minY;
+        // this.minX -= 5;
+        // this.minY -= 5;
         ProcessDefinitionEntity definition = new GetDeploymentProcessDefinitionCmd(
                 processDefinitionId).execute(Context.getCommandContext());
         String diagramResourceName = definition.getDiagramResourceName();
@@ -289,6 +289,8 @@ public class CustomProcessDiagramGenerator {
             Graphics2D graphics, Color color, String activityType) {
         graphics.setPaint(color);
         graphics.setStroke(THICK_BORDER_STROKE);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON);
 
         if (taskType.contains(activityType)) {
             drawTask(x, y, width, height, graphics);
@@ -567,6 +569,8 @@ public class CustomProcessDiagramGenerator {
         Graphics2D graphics = image.createGraphics();
         graphics.setPaint(HISTORY_COLOR);
         graphics.setStroke(new BasicStroke(2f));
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON);
 
         try {
             List<GraphicInfo> graphicInfoList = bpmnModel

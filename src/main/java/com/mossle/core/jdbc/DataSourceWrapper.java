@@ -43,6 +43,12 @@ public class DataSourceWrapper extends DataSourceProxy {
             throwable = ex;
         }
 
+        this.initLog4jdbc();
+    }
+
+    public void initLog4jdbc() {
+        // DriverSpy.SqlTimingErrorThresholdEnabled = true;
+        // DriverSpy.SqlTimingErrorThresholdMsec = 3000;
         this.log4jdbcProxyDataSource = new Log4jdbcProxyDataSource(
                 this.basicDataSource);
 
@@ -115,5 +121,18 @@ public class DataSourceWrapper extends DataSourceProxy {
         this.close();
 
         this.init();
+    }
+
+    // ~
+    public int getActive() {
+        return basicDataSource.getNumActive();
+    }
+
+    public int getMax() {
+        return basicDataSource.getMaxActive();
+    }
+
+    public int getMin() {
+        return basicDataSource.getMinIdle();
     }
 }

@@ -2,16 +2,22 @@ package com.mossle.api.userauth;
 
 import java.util.List;
 
+import com.mossle.api.menu.MenuDTO;
+
 public class UserAuthDTO {
     private String id;
-    private String scopeId;
+    private String tenantId;
     private String username;
-    private String password;
     private String ref;
     private String displayName;
     private String status;
+    private boolean enabled;
+    private boolean credentialsExpired;
+    private boolean accountLocked;
+    private boolean accountExpired;
     private List<String> permissions;
     private List<String> roles;
+    private List<MenuDTO> menus;
 
     public String getId() {
         return id;
@@ -21,12 +27,12 @@ public class UserAuthDTO {
         this.id = id;
     }
 
-    public String getScopeId() {
-        return scopeId;
+    public String getTenantId() {
+        return tenantId;
     }
 
-    public void setScopeId(String scopeId) {
-        this.scopeId = scopeId;
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
     }
 
     public String getUsername() {
@@ -35,14 +41,6 @@ public class UserAuthDTO {
 
     public void setUsername(String username) {
         this.username = username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
     }
 
     public String getRef() {
@@ -69,6 +67,38 @@ public class UserAuthDTO {
         this.status = status;
     }
 
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public boolean isCredentialsExpired() {
+        return credentialsExpired;
+    }
+
+    public void setCredentialsExpired(boolean credentialsExpired) {
+        this.credentialsExpired = credentialsExpired;
+    }
+
+    public boolean isAccountLocked() {
+        return accountLocked;
+    }
+
+    public void setAccountLocked(boolean accountLocked) {
+        this.accountLocked = accountLocked;
+    }
+
+    public boolean isAccountExpired() {
+        return accountExpired;
+    }
+
+    public void setAccountExpired(boolean accountExpired) {
+        this.accountExpired = accountExpired;
+    }
+
     public List<String> getPermissions() {
         return permissions;
     }
@@ -83,5 +113,17 @@ public class UserAuthDTO {
 
     public void setRoles(List<String> roles) {
         this.roles = roles;
+    }
+
+    public List<MenuDTO> getMenus() {
+        return menus;
+    }
+
+    public void setMenus(List<MenuDTO> menus) {
+        this.menus = menus;
+    }
+
+    public List<MenuDTO> getMenusBySys(String sysCode) {
+        return this.getMenus();
     }
 }

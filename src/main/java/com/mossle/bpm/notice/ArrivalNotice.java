@@ -1,29 +1,23 @@
 package com.mossle.bpm.notice;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.mossle.api.msg.MsgConnector;
 import com.mossle.api.notification.NotificationConnector;
 import com.mossle.api.notification.NotificationDTO;
 import com.mossle.api.user.UserConnector;
 import com.mossle.api.user.UserDTO;
 
 import com.mossle.bpm.persistence.domain.BpmConfNotice;
-import com.mossle.bpm.persistence.domain.BpmMailTemplate;
 import com.mossle.bpm.persistence.manager.BpmConfNoticeManager;
 
 import com.mossle.core.spring.ApplicationContextHelper;
 
-import com.mossle.ext.mail.MailFacade;
-
 import org.activiti.engine.delegate.DelegateTask;
 import org.activiti.engine.impl.context.Context;
-import org.activiti.engine.impl.el.ExpressionManager;
-import org.activiti.engine.impl.persistence.entity.*;
+import org.activiti.engine.impl.persistence.entity.HistoricProcessInstanceEntity;
 import org.activiti.engine.impl.persistence.entity.TaskEntity;
 
 import org.slf4j.Logger;
@@ -36,6 +30,10 @@ public class ArrivalNotice {
     public static final int TYPE_TIMEOUT = 2;
 
     public void process(DelegateTask delegateTask) {
+        if (delegateTask.getAssignee() == null) {
+            return;
+        }
+
         String taskDefinitionKey = delegateTask.getTaskDefinitionKey();
         String processDefinitionId = delegateTask.getProcessDefinitionId();
 
@@ -113,7 +111,7 @@ public class ArrivalNotice {
                 .getNotificationType().split(",")));
         notificationDto.setData(data);
         notificationDto.setTemplate(bpmConfNotice.getTemplateCode());
-        notificationConnector.send(notificationDto);
+        notificationConnector.send(notificationDto, delegateTask.getTenantId());
     }
 
     public String getInitiator(UserConnector userConnector,

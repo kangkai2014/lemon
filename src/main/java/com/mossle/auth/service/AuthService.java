@@ -6,14 +6,18 @@ import java.util.List;
 
 import javax.annotation.Resource;
 
-import com.mossle.auth.domain.Access;
-import com.mossle.auth.domain.Perm;
-import com.mossle.auth.domain.Role;
-import com.mossle.auth.domain.UserStatus;
-import com.mossle.auth.manager.AccessManager;
-import com.mossle.auth.manager.PermManager;
-import com.mossle.auth.manager.RoleManager;
-import com.mossle.auth.manager.UserStatusManager;
+import com.mossle.api.tenant.TenantHolder;
+import com.mossle.api.user.UserConnector;
+import com.mossle.api.user.UserDTO;
+
+import com.mossle.auth.persistence.domain.Access;
+import com.mossle.auth.persistence.domain.Perm;
+import com.mossle.auth.persistence.domain.Role;
+import com.mossle.auth.persistence.domain.UserStatus;
+import com.mossle.auth.persistence.manager.AccessManager;
+import com.mossle.auth.persistence.manager.PermManager;
+import com.mossle.auth.persistence.manager.RoleManager;
+import com.mossle.auth.persistence.manager.UserStatusManager;
 import com.mossle.auth.support.Exporter;
 import com.mossle.auth.support.Importer;
 
@@ -38,19 +42,21 @@ public class AuthService {
     private JdbcTemplate jdbcTemplate;
     private AccessManager accessManager;
     private PermManager permManager;
+    private TenantHolder tenantHolder;
+    private UserConnector userConnector;
 
     public UserStatus createOrGetUserStatus(String username, String ref,
-            String userRepoRef, String scopeId) {
+            String userRepoRef, String tenantId) {
         UserStatus userStatus = userStatusManager.findUnique(
-                "from UserStatus where username=? and scopeId=?", username,
-                scopeId);
+                "from UserStatus where username=? and tenantId=?", username,
+                tenantId);
 
         if (userStatus == null) {
             userStatus = new UserStatus();
             userStatus.setUsername(username);
             userStatus.setRef(ref);
             userStatus.setUserRepoRef(userRepoRef);
-            userStatus.setScopeId(scopeId);
+            userStatus.setTenantId(tenantId);
             // TODO: 考虑status同步的策略，目前是默认都设置成了有效
             userStatus.setStatus(1);
             userStatusManager.save(userStatus);
@@ -60,7 +66,7 @@ public class AuthService {
     }
 
     public void configUserRole(Long userId, List<Long> roleIds,
-            String userRepoRef, String scopeId, boolean clearRoles) {
+            String userRepoRef, String tenantId, boolean clearRoles) {
         logger.debug("userId: {}, roleIds: {}", userId, roleIds);
 
         UserStatus userStatus = userStatusManager.get(userId);
@@ -129,9 +135,9 @@ public class AuthService {
         importer.execute(text);
     }
 
-    public void batchSaveAccess(String text, String type, String scopeId) {
+    public void batchSaveAccess(String text, String type, String tenantId) {
         List<Access> accesses = accessManager.find(
-                "from Access where type=? and scopeId=?", type, scopeId);
+                "from Access where type=? and tenantId=?", type, tenantId);
 
         for (Access access : accesses) {
             accessManager.remove(access);
@@ -156,20 +162,85 @@ public class AuthService {
 
             Access access = new Access();
             access.setValue(value);
-            access.setScopeId(scopeId);
+            access.setTenantId(tenantId);
             access.setType(type);
             access.setPriority(priority);
 
             Perm perm = permManager.findUnique(
-                    "from Perm where code=? and scopeId=?", permStr, scopeId);
+                    "from Perm where code=? and tenantId=?", permStr, tenantId);
             Assert.notNull(perm, "cannot find perm");
             access.setPerm(perm);
             accessManager.save(access);
         }
     }
 
-    public List<Role> findRoles(String scopeId) {
-        return roleManager.find("from Role where scopeId=?", scopeId);
+    public List<Role> findRoles(String tenantId) {
+        return roleManager.find("from Role where tenantId=?", tenantId);
+    }
+
+    public void saveRoleUserRelation(Long roleId, List<String> usernames) {
+        logger.debug("roleId: {}, usernames: {}", roleId, usernames);
+
+        Role role = roleManager.get(roleId);
+
+        if (role == null) {
+            logger.warn("cannot find role : {}", roleId);
+
+            return;
+        }
+
+        List<String> exists = new ArrayList<String>();
+
+        for (UserStatus userStatus : role.getUserStatuses()) {
+            exists.add(userStatus.getUsername());
+        }
+
+        List<String> targetUsernames = new ArrayList<String>();
+
+        for (String username : usernames) {
+            targetUsernames.add(username.trim().toLowerCase());
+        }
+
+        List<String> removed = new ArrayList<String>();
+        List<String> inserted = new ArrayList<String>();
+
+        for (String username : targetUsernames) {
+            if (!exists.contains(username)) {
+                inserted.add(username);
+            }
+        }
+
+        for (String username : exists) {
+            if (!targetUsernames.contains(username)) {
+                removed.add(username);
+            }
+        }
+
+        logger.debug("exists : {}", exists);
+        logger.debug("removed : {}", removed);
+        logger.debug("inserted : {}", inserted);
+
+        for (String username : removed) {
+            logger.debug("remove : {}", username);
+
+            UserStatus userStatus = userStatusManager.findUniqueBy("username",
+                    username);
+            role.getUserStatuses().remove(userStatus);
+        }
+
+        for (String username : inserted) {
+            logger.debug("insert : {}", username);
+
+            UserDTO userDto = userConnector.findByUsername(username,
+                    tenantHolder.getTenantId());
+            UserStatus userStatus = this.createOrGetUserStatus(username,
+                    userDto.getId(), tenantHolder.getUserRepoRef(),
+                    tenantHolder.getTenantId());
+
+            role.getUserStatuses().add(userStatus);
+        }
+
+        roleManager.save(role);
     }
 
     @Resource
@@ -195,5 +266,15 @@ public class AuthService {
     @Resource
     public void setJdbcTemplate(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Resource
+    public void setUserConnector(UserConnector userConnector) {
+        this.userConnector = userConnector;
+    }
+
+    @Resource
+    public void setTenantHolder(TenantHolder tenantHolder) {
+        this.tenantHolder = tenantHolder;
     }
 }

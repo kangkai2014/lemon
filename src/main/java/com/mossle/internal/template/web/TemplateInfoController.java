@@ -1,20 +1,17 @@
 package com.mossle.internal.template.web;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import javax.annotation.Resource;
 
-import javax.servlet.http.HttpServletResponse;
+import com.mossle.api.tenant.TenantHolder;
 
-import com.mossle.core.hibernate.PropertyFilter;
+import com.mossle.core.export.Exportor;
 import com.mossle.core.mapper.BeanMapper;
 import com.mossle.core.page.Page;
+import com.mossle.core.query.PropertyFilter;
 import com.mossle.core.spring.MessageHelper;
-
-import com.mossle.ext.export.Exportor;
-import com.mossle.ext.export.TableModel;
 
 import com.mossle.internal.template.persistence.domain.TemplateInfo;
 import com.mossle.internal.template.persistence.manager.TemplateInfoManager;
@@ -29,18 +26,21 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 @Controller
-@RequestMapping("/template")
+@RequestMapping("template")
 public class TemplateInfoController {
     private TemplateInfoManager templateInfoManager;
     private MessageHelper messageHelper;
     private Exportor exportor;
     private BeanMapper beanMapper = new BeanMapper();
+    private TenantHolder tenantHolder;
 
     @RequestMapping("template-info-list")
     public String list(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap, Model model) {
+        String tenantId = tenantHolder.getTenantId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
+        propertyFilters.add(new PropertyFilter("EQS_tenantId", tenantId));
         page = templateInfoManager.pagedQuery(page, propertyFilters);
         model.addAttribute("page", page);
 
@@ -65,6 +65,7 @@ public class TemplateInfoController {
     @RequestMapping("template-info-save")
     public String save(@ModelAttribute TemplateInfo templateInfo,
             RedirectAttributes redirectAttributes) {
+        String tenantId = tenantHolder.getTenantId();
         Long id = templateInfo.getId();
         TemplateInfo dest = null;
 
@@ -73,6 +74,7 @@ public class TemplateInfoController {
             beanMapper.copy(templateInfo, dest);
         } else {
             dest = templateInfo;
+            dest.setTenantId(tenantId);
         }
 
         templateInfoManager.save(dest);
@@ -113,5 +115,10 @@ public class TemplateInfoController {
     @Resource
     public void setExportor(Exportor exportor) {
         this.exportor = exportor;
+    }
+
+    @Resource
+    public void setTenantHolder(TenantHolder tenantHolder) {
+        this.tenantHolder = tenantHolder;
     }
 }

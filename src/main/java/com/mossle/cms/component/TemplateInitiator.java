@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 
 import org.springframework.util.FileCopyUtils;
 
-@Component
+// @Component
 public class TemplateInitiator implements ApplicationContextAware {
     private static Logger logger = LoggerFactory
             .getLogger(TemplateInitiator.class);
@@ -48,9 +48,13 @@ public class TemplateInitiator implements ApplicationContextAware {
         for (Resource resource : resources) {
             File file = new File(dir, resource.getFilename());
             FileOutputStream fos = new FileOutputStream(file);
-            FileCopyUtils.copy(resource.getInputStream(), fos);
-            fos.flush();
-            fos.close();
+
+            try {
+                FileCopyUtils.copy(resource.getInputStream(), fos);
+                fos.flush();
+            } finally {
+                fos.close();
+            }
         }
     }
 

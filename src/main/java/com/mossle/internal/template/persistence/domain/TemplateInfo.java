@@ -7,7 +7,6 @@ import java.util.Set;
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.FetchType;
-import javax.persistence.GeneratedValue;
 import javax.persistence.Id;
 import javax.persistence.OneToMany;
 import javax.persistence.Table;
@@ -31,22 +30,30 @@ public class TemplateInfo implements java.io.Serializable {
     /** null. */
     private String code;
 
+    /** null. */
+    private String tenantId;
+
     /** . */
     private Set<TemplateField> templateFields = new HashSet<TemplateField>(0);
 
     public TemplateInfo() {
     }
 
-    public TemplateInfo(String name, String code,
+    public TemplateInfo(Long id) {
+        this.id = id;
+    }
+
+    public TemplateInfo(Long id, String name, String code, String tenantId,
             Set<TemplateField> templateFields) {
+        this.id = id;
         this.name = name;
         this.code = code;
+        this.tenantId = tenantId;
         this.templateFields = templateFields;
     }
 
     /** @return null. */
     @Id
-    @GeneratedValue
     @Column(name = "ID", unique = true, nullable = false)
     public Long getId() {
         return this.id;
@@ -86,6 +93,20 @@ public class TemplateInfo implements java.io.Serializable {
      */
     public void setCode(String code) {
         this.code = code;
+    }
+
+    /** @return null. */
+    @Column(name = "TENANT_ID", length = 64)
+    public String getTenantId() {
+        return this.tenantId;
+    }
+
+    /**
+     * @param tenantId
+     *            null.
+     */
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
     }
 
     /** @return . */

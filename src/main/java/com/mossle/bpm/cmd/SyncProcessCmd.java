@@ -18,8 +18,12 @@ import com.mossle.bpm.persistence.manager.BpmConfFormManager;
 import com.mossle.bpm.persistence.manager.BpmConfListenerManager;
 import com.mossle.bpm.persistence.manager.BpmConfNodeManager;
 import com.mossle.bpm.persistence.manager.BpmConfUserManager;
+import com.mossle.bpm.support.TaskDefinitionBuilder;
 
 import com.mossle.core.spring.ApplicationContextHelper;
+
+import com.mossle.spi.humantask.TaskDefinitionConnector;
+import com.mossle.spi.humantask.TaskDefinitionDTO;
 
 import org.activiti.bpmn.model.ActivitiListener;
 import org.activiti.bpmn.model.BpmnModel;
@@ -30,12 +34,9 @@ import org.activiti.bpmn.model.UserTask;
 
 import org.activiti.engine.impl.cmd.GetBpmnModelCmd;
 import org.activiti.engine.impl.cmd.GetDeploymentProcessDefinitionCmd;
-import org.activiti.engine.impl.context.Context;
 import org.activiti.engine.impl.interceptor.Command;
 import org.activiti.engine.impl.interceptor.CommandContext;
 import org.activiti.engine.impl.persistence.entity.ProcessDefinitionEntity;
-
-import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * 把xml解析的内存模型保存到数据库里.
@@ -109,7 +110,7 @@ public class SyncProcessCmd implements Command<Void> {
 
         if (bpmConfNode == null) {
             bpmConfNode = new BpmConfNode();
-            bpmConfNode.setCode(process.getId());
+            bpmConfNode.setCode("");
             bpmConfNode.setName("全局");
             bpmConfNode.setType("process");
             bpmConfNode.setConfUser(2);
@@ -184,6 +185,15 @@ public class SyncProcessCmd implements Command<Void> {
                     .isSequential() ? 1 : 0);
             getBpmConfCountersignManager().save(bpmConfCountersign);
         }
+
+        // 更新TaskDefinition
+        TaskDefinitionConnector taskDefinitionConnector = this
+                .getTaskDefinitionConnector();
+        TaskDefinitionDTO taskDefinitionDto = new TaskDefinitionBuilder()
+                .setUserTask(userTask)
+                .setProcessDefinitionId(bpmConfBase.getProcessDefinitionId())
+                .build();
+        taskDefinitionConnector.create(taskDefinitionDto);
     }
 
     /**
@@ -198,7 +208,7 @@ public class SyncProcessCmd implements Command<Void> {
         BpmConfUserManager bpmConfUserManager = getBpmConfUserManager();
         BpmConfUser bpmConfUser = bpmConfUserManager
                 .findUnique(
-                        "from BpmConfUser where value=? and type=? and priority=? and status=0 and bpmConfNode=?",
+                        "from BpmConfUser where value=? and type=? and priority=? and bpmConfNode=?",
                         value, type, priority, bpmConfNode);
 
         if (bpmConfUser == null) {
@@ -308,6 +318,7 @@ public class SyncProcessCmd implements Command<Void> {
                 bpmConfListener = new BpmConfListener();
                 bpmConfListener.setValue(value);
                 bpmConfListener.setType(type);
+                bpmConfListener.setBpmConfNode(bpmConfNode);
                 bpmConfListenerManager.save(bpmConfListener);
             }
         }
@@ -385,5 +396,9 @@ public class SyncProcessCmd implements Command<Void> {
     public BpmConfCountersignManager getBpmConfCountersignManager() {
         return ApplicationContextHelper
                 .getBean(BpmConfCountersignManager.class);
+    }
+
+    public TaskDefinitionConnector getTaskDefinitionConnector() {
+        return ApplicationContextHelper.getBean(TaskDefinitionConnector.class);
     }
 }

@@ -1,2 +1,0 @@
-
-UPDATE AUTH_PERM SET priority=ID;

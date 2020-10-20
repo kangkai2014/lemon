@@ -4,7 +4,7 @@
 --  cms article
 -------------------------------------------------------------------------------
 CREATE TABLE CMS_ARTICLE(
-        ID BIGINT auto_increment,
+        ID BIGINT NOT NULL,
 	TITLE VARCHAR(200),
 	SHORT_TITLE VARCHAR(200),
 	SUB_TITLE VARCHAR(200),

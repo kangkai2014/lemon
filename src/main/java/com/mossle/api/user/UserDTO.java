@@ -4,6 +4,9 @@ public class UserDTO {
     /** 用户在数据库里的唯一标识. */
     private String id;
 
+    /** 逻辑主键. */
+    private String code;
+
     /** 用户登录使用的账号. */
     private String username;
 
@@ -19,6 +22,9 @@ public class UserDTO {
     /** 显示名. */
     private String displayName;
 
+    /** 昵称. */
+    private String nickName;
+
     /** 邮箱. */
     private String email;
 
@@ -31,6 +37,14 @@ public class UserDTO {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
     }
 
     public String getUsername() {
@@ -71,6 +85,14 @@ public class UserDTO {
 
     public void setDisplayName(String displayName) {
         this.displayName = displayName;
+    }
+
+    public String getNickName() {
+        return nickName;
+    }
+
+    public void setNickName(String nickName) {
+        this.nickName = nickName;
     }
 
     public String getEmail() {

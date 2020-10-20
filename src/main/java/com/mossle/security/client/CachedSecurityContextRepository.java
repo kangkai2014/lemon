@@ -1,10 +1,8 @@
 package com.mossle.security.client;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
-import com.mossle.api.userauth.UserAuthConnector;
 import com.mossle.api.userauth.UserAuthDTO;
+
+import com.mossle.client.authz.AuthzClient;
 
 import com.mossle.core.mapper.BeanMapper;
 
@@ -17,7 +15,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 
 public class CachedSecurityContextRepository extends
         HttpSessionSecurityContextRepository {
-    private UserAuthConnector userAuthConnector;
+    private AuthzClient authzClient;
     private BeanMapper beanMapper = new BeanMapper();
     private boolean debug;
 
@@ -36,29 +34,33 @@ public class CachedSecurityContextRepository extends
             return securityContext;
         }
 
-        SpringSecurityUserAuth userAuthInSession = SpringSecurityUtils
-                .getCurrentUser(securityContext);
+        try {
+            SpringSecurityUserAuth userAuthInSession = SpringSecurityUtils
+                    .getCurrentUser(securityContext);
 
-        if (userAuthInSession == null) {
-            logger.debug("userAuthInSession is null");
+            if (userAuthInSession == null) {
+                logger.debug("userAuthInSession is null");
 
-            return securityContext;
+                return securityContext;
+            }
+
+            UserAuthDTO userAuthInCache = authzClient.findById(
+                    userAuthInSession.getId(), userAuthInSession.getTenantId());
+
+            SpringSecurityUserAuth userAuthResult = new SpringSecurityUserAuth();
+            beanMapper.copy(userAuthInCache, userAuthResult);
+
+            SpringSecurityUtils.saveUserDetailsToContext(userAuthResult, null,
+                    securityContext);
+        } catch (Exception ex) {
+            logger.error(ex.getMessage(), ex);
         }
-
-        UserAuthDTO userAuthInCache = userAuthConnector.findById(
-                userAuthInSession.getId(), userAuthInSession.getScopeId());
-
-        SpringSecurityUserAuth userAuthResult = new SpringSecurityUserAuth();
-        beanMapper.copy(userAuthInCache, userAuthResult);
-
-        SpringSecurityUtils.saveUserDetailsToContext(userAuthResult, null,
-                securityContext);
 
         return securityContext;
     }
 
-    public void setUserAuthConnector(UserAuthConnector userAuthConnector) {
-        this.userAuthConnector = userAuthConnector;
+    public void setAuthzClient(AuthzClient authzClient) {
+        this.authzClient = authzClient;
     }
 
     public void setDebug(boolean debug) {

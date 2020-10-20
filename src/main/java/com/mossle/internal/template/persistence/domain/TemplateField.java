@@ -4,7 +4,6 @@ package com.mossle.internal.template.persistence.domain;
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.FetchType;
-import javax.persistence.GeneratedValue;
 import javax.persistence.Id;
 import javax.persistence.JoinColumn;
 import javax.persistence.ManyToOne;
@@ -35,20 +34,28 @@ public class TemplateField implements java.io.Serializable {
     /** null. */
     private String content;
 
+    /** null. */
+    private String tenantId;
+
     public TemplateField() {
     }
 
-    public TemplateField(TemplateInfo templateInfo, String name, String type,
-            String content) {
+    public TemplateField(Long id) {
+        this.id = id;
+    }
+
+    public TemplateField(Long id, TemplateInfo templateInfo, String name,
+            String type, String content, String tenantId) {
+        this.id = id;
         this.templateInfo = templateInfo;
         this.name = name;
         this.type = type;
         this.content = content;
+        this.tenantId = tenantId;
     }
 
     /** @return null. */
     @Id
-    @GeneratedValue
     @Column(name = "ID", unique = true, nullable = false)
     public Long getId() {
         return this.id;
@@ -117,5 +124,19 @@ public class TemplateField implements java.io.Serializable {
      */
     public void setContent(String content) {
         this.content = content;
+    }
+
+    /** @return null. */
+    @Column(name = "TENANT_ID", length = 64)
+    public String getTenantId() {
+        return this.tenantId;
+    }
+
+    /**
+     * @param tenantId
+     *            null.
+     */
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
     }
 }

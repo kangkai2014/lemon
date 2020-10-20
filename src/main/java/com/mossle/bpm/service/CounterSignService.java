@@ -2,8 +2,8 @@ package com.mossle.bpm.service;
 
 import javax.annotation.Resource;
 
-import com.mossle.bpm.persistence.domain.BpmConfCountersign;
-import com.mossle.bpm.persistence.manager.BpmConfCountersignManager;
+import com.mossle.spi.humantask.CounterSignDTO;
+import com.mossle.spi.humantask.TaskDefinitionConnector;
 
 import org.activiti.engine.ProcessEngine;
 import org.activiti.engine.RuntimeService;
@@ -14,8 +14,6 @@ import org.apache.commons.lang3.builder.ToStringBuilder;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import org.springframework.beans.factory.annotation.Autowired;
 
 import org.springframework.stereotype.Service;
 
@@ -28,7 +26,7 @@ import org.springframework.stereotype.Service;
 public class CounterSignService {
     private Logger logger = LoggerFactory.getLogger(CounterSignService.class);
     private ProcessEngine processEngine;
-    private BpmConfCountersignManager bpmConfCountersignManager;
+    private TaskDefinitionConnector taskDefinitionConnector;
 
     public Boolean canComplete(Execution execution, Integer nrOfInstances,
             Integer nrOfActiveInstances, Integer nrOfCompletedInstances,
@@ -48,13 +46,12 @@ public class CounterSignService {
                 .getProcessInstance().getProcessDefinitionId();
 
         RuntimeService runtimeService = processEngine.getRuntimeService();
-        BpmConfCountersign bpmConfCountersign = bpmConfCountersignManager
-                .findUnique(
-                        "from BpmConfCountersign where bpmConfNode.bpmConfBase.processDefinitionId=? and bpmConfNode.code=?",
-                        processDefinitionId, activityId);
 
-        if (bpmConfCountersign != null) {
-            rate = bpmConfCountersign.getRate();
+        CounterSignDTO counterSign = taskDefinitionConnector.findCounterSign(
+                activityId, processDefinitionId);
+
+        if (counterSign != null) {
+            rate = counterSign.getRate();
         }
 
         String agreeCounterName = "agreeCounter";
@@ -82,11 +79,11 @@ public class CounterSignService {
         // 计算通过的比例，以此决定是否结束会签
         double completeRate = nrOfCompletedInstances.doubleValue()
                 / nrOfInstances;
-        boolean canComlete = (completeRate * 100) >= rate;
-        logger.debug("rate: {}, completeRate: {}, canComlete={}", new Object[] {
-                rate, completeRate, canComlete });
+        boolean canComplete = (completeRate * 100) >= rate;
+        logger.debug("rate: {}, completeRate: {}, canComplete={}",
+                new Object[] { rate, completeRate, canComplete });
 
-        return canComlete;
+        return canComplete;
     }
 
     @Resource
@@ -95,8 +92,8 @@ public class CounterSignService {
     }
 
     @Resource
-    public void setBpmConfCountersignManager(
-            BpmConfCountersignManager bpmConfCountersignManager) {
-        this.bpmConfCountersignManager = bpmConfCountersignManager;
+    public void setTaskDefinitionConnector(
+            TaskDefinitionConnector taskDefinitionConnector) {
+        this.taskDefinitionConnector = taskDefinitionConnector;
     }
 }

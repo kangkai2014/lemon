@@ -1,23 +1,27 @@
 package com.mossle.cms.web;
 
-import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
 import javax.annotation.Resource;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import com.mossle.cms.domain.CmsComment;
-import com.mossle.cms.manager.CmsCommentManager;
+import com.mossle.api.auth.CurrentUserHolder;
 
-import com.mossle.core.hibernate.PropertyFilter;
+import com.mossle.cms.persistence.domain.CmsArticle;
+import com.mossle.cms.persistence.domain.CmsComment;
+import com.mossle.cms.persistence.manager.CmsArticleManager;
+import com.mossle.cms.persistence.manager.CmsCommentManager;
+
+import com.mossle.core.export.Exportor;
+import com.mossle.core.export.TableModel;
 import com.mossle.core.mapper.BeanMapper;
 import com.mossle.core.page.Page;
+import com.mossle.core.query.PropertyFilter;
 import com.mossle.core.spring.MessageHelper;
-
-import com.mossle.ext.export.Exportor;
-import com.mossle.ext.export.TableModel;
 
 import org.springframework.stereotype.Controller;
 
@@ -33,9 +37,11 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 @RequestMapping("/cms")
 public class CmsCommentController {
     private CmsCommentManager cmsCommentManager;
+    private CmsArticleManager cmsArticleManager;
     private Exportor exportor;
     private BeanMapper beanMapper = new BeanMapper();
     private MessageHelper messageHelper;
+    private CurrentUserHolder currentUserHolder;
 
     @RequestMapping("cms-comment-list")
     public String list(@ModelAttribute Page page,
@@ -94,7 +100,8 @@ public class CmsCommentController {
     @RequestMapping("cms-comment-export")
     public void export(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap,
-            HttpServletResponse response) throws Exception {
+            HttpServletRequest request, HttpServletResponse response)
+            throws Exception {
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
         page = cmsCommentManager.pagedQuery(page, propertyFilters);
@@ -105,7 +112,7 @@ public class CmsCommentController {
         tableModel.setName("cmsComment");
         tableModel.addHeaders("id", "name");
         tableModel.setData(cmsComments);
-        exportor.export(response, tableModel);
+        exportor.export(request, response, tableModel);
     }
 
     @RequestMapping("cms-comment-checkName")
@@ -128,10 +135,53 @@ public class CmsCommentController {
         return result;
     }
 
+    @RequestMapping("cms-comment-submit")
+    public String submit(@ModelAttribute CmsComment cmsComment,
+            @RequestParam("articleId") Long articleId,
+            RedirectAttributes redirectAttributes) {
+        String userId = currentUserHolder.getUserId();
+        cmsComment.setCmsArticle(cmsArticleManager.get(articleId));
+        cmsComment.setCreateTime(new Date());
+        cmsComment.setUserId(userId);
+        cmsCommentManager.save(cmsComment);
+
+        return "redirect:/cms/cms-article-view.do?id=" + articleId;
+    }
+
+    @RequestMapping("cms-comment-reply")
+    @ResponseBody
+    public String reply(@RequestParam("articleId") Long articleId,
+            @RequestParam("commentId") Long commentId,
+            @RequestParam("content") String content) {
+        CmsComment parent = cmsCommentManager.get(commentId);
+        Long conversation = parent.getId();
+
+        if (parent.getConversation() != null) {
+            conversation = parent.getConversation();
+        }
+
+        String userId = currentUserHolder.getUserId();
+        CmsComment cmsComment = new CmsComment();
+        cmsComment.setCmsArticle(cmsArticleManager.get(articleId));
+        cmsComment.setCreateTime(new Date());
+        cmsComment.setUserId(userId);
+        cmsComment.setConversation(conversation);
+        cmsComment.setContent(content);
+        cmsComment.setCmsComment(parent);
+        cmsCommentManager.save(cmsComment);
+
+        return "true";
+    }
+
     // ~ ======================================================================
     @Resource
     public void setCmsCommentManager(CmsCommentManager cmsCommentManager) {
         this.cmsCommentManager = cmsCommentManager;
+    }
+
+    @Resource
+    public void setCmsArticleManager(CmsArticleManager cmsArticleManager) {
+        this.cmsArticleManager = cmsArticleManager;
     }
 
     @Resource
@@ -142,5 +192,10 @@ public class CmsCommentController {
     @Resource
     public void setMessageHelper(MessageHelper messageHelper) {
         this.messageHelper = messageHelper;
+    }
+
+    @Resource
+    public void setCurrentUserHolder(CurrentUserHolder currentUserHolder) {
+        this.currentUserHolder = currentUserHolder;
     }
 }

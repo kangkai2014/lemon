@@ -8,29 +8,35 @@ import java.util.Map;
 
 import javax.annotation.Resource;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import com.mossle.cms.CmsConstants;
-import com.mossle.cms.domain.CmsArticle;
-import com.mossle.cms.domain.CmsAttachment;
-import com.mossle.cms.domain.CmsCatalog;
-import com.mossle.cms.manager.CmsArticleManager;
-import com.mossle.cms.manager.CmsAttachmentManager;
-import com.mossle.cms.manager.CmsCatalogManager;
-import com.mossle.cms.service.RenderService;
+import com.mossle.api.auth.CurrentUserHolder;
+import com.mossle.api.store.StoreDTO;
+import com.mossle.api.tenant.TenantHolder;
 
-import com.mossle.core.hibernate.PropertyFilter;
+import com.mossle.client.store.StoreClient;
+
+import com.mossle.cms.CmsConstants;
+import com.mossle.cms.persistence.domain.CmsArticle;
+import com.mossle.cms.persistence.domain.CmsAttachment;
+import com.mossle.cms.persistence.domain.CmsCatalog;
+import com.mossle.cms.persistence.domain.CmsComment;
+import com.mossle.cms.persistence.manager.CmsArticleManager;
+import com.mossle.cms.persistence.manager.CmsAttachmentManager;
+import com.mossle.cms.persistence.manager.CmsCatalogManager;
+import com.mossle.cms.persistence.manager.CmsCommentManager;
+import com.mossle.cms.service.RenderService;
+import com.mossle.cms.support.CommentDTO;
+
+import com.mossle.core.export.Exportor;
+import com.mossle.core.export.TableModel;
 import com.mossle.core.mapper.BeanMapper;
 import com.mossle.core.mapper.JsonMapper;
 import com.mossle.core.page.Page;
+import com.mossle.core.query.PropertyFilter;
 import com.mossle.core.spring.MessageHelper;
-
-import com.mossle.ext.auth.CurrentUserHolder;
-import com.mossle.ext.export.Exportor;
-import com.mossle.ext.export.TableModel;
-import com.mossle.ext.store.MultipartFileResource;
-import com.mossle.ext.store.StoreConnector;
-import com.mossle.ext.store.StoreDTO;
+import com.mossle.core.store.MultipartFileDataSource;
 
 import org.springframework.stereotype.Controller;
 
@@ -43,48 +49,80 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+/**
+ * 文章.
+ */
 @Controller
-@RequestMapping("/cms")
+@RequestMapping("cms")
 public class CmsArticleController {
     private CmsArticleManager cmsArticleManager;
     private CmsCatalogManager cmsCatalogManager;
     private CmsAttachmentManager cmsAttachmentManager;
+    private CmsCommentManager cmsCommentManager;
     private Exportor exportor;
     private BeanMapper beanMapper = new BeanMapper();
     private MessageHelper messageHelper;
     private RenderService renderService;
-    private StoreConnector storeConnector;
+    private StoreClient storeClient;
     private JsonMapper jsonMapper = new JsonMapper();
     private CurrentUserHolder currentUserHolder;
+    private TenantHolder tenantHolder;
 
+    /**
+     * 文章列表.
+     */
     @RequestMapping("cms-article-list")
     public String list(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap, Model model) {
+        page.setDefaultOrder("publishTime", Page.DESC);
+
+        String tenantId = tenantHolder.getTenantId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
+        propertyFilters.add(new PropertyFilter("EQS_tenantId", tenantId));
         page = cmsArticleManager.pagedQuery(page, propertyFilters);
         model.addAttribute("page", page);
 
         return "cms/cms-article-list";
     }
 
+    /**
+     * 编辑.
+     */
     @RequestMapping("cms-article-input")
-    public String input(@RequestParam(value = "id", required = false) Long id,
+    public String input(
+            @RequestParam(value = "id", required = false) Long id,
+            @RequestParam(value = "catalogId", required = false) Long catalogId,
             Model model) {
+        String tenantId = tenantHolder.getTenantId();
+
         if (id != null) {
             CmsArticle cmsArticle = cmsArticleManager.get(id);
             model.addAttribute("model", cmsArticle);
         }
 
-        model.addAttribute("cmsCatalogs", cmsCatalogManager.getAll());
+        model.addAttribute("cmsCatalogs",
+                cmsCatalogManager.findBy("tenantId", tenantId));
+
+        if (catalogId != null) {
+            CmsCatalog cmsCatalog = this.cmsCatalogManager.get(catalogId);
+            model.addAttribute("cmsCatalog", cmsCatalog);
+        }
 
         return "cms/cms-article-input";
     }
 
+    /**
+     * 保存文章.
+     */
     @RequestMapping("cms-article-save")
-    public String save(@ModelAttribute CmsArticle cmsArticle,
+    public String save(
+            @ModelAttribute CmsArticle cmsArticle,
             @RequestParam("cmsCatalogId") Long cmsCatalogId,
-            RedirectAttributes redirectAttributes) {
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "logoFile", required = false) MultipartFile logoFile,
+            RedirectAttributes redirectAttributes) throws Exception {
+        String tenantId = tenantHolder.getTenantId();
         Long id = cmsArticle.getId();
         CmsArticle dest = null;
 
@@ -98,35 +136,71 @@ public class CmsArticleController {
         if (id == null) {
             dest.setUserId(currentUserHolder.getUserId());
             dest.setCreateTime(new Date());
+            dest.setTenantId(tenantId);
         }
 
         dest.setCmsCatalog(cmsCatalogManager.get(cmsCatalogId));
+        cmsArticleManager.save(dest);
+
+        // attachment
+        if (file != null) {
+            StoreDTO storeDto = storeClient.saveStore("cms",
+                    new MultipartFileDataSource(file), tenantId);
+            CmsAttachment cmsAttachment = new CmsAttachment();
+            cmsAttachment.setCmsArticle(dest);
+            cmsAttachment.setName(file.getOriginalFilename());
+            cmsAttachment.setPath(storeDto.getKey());
+            cmsAttachmentManager.save(cmsAttachment);
+        }
+
+        // logo
+        if (logoFile != null) {
+            StoreDTO storeDto = storeClient.saveStore("cms",
+                    new MultipartFileDataSource(logoFile), tenantId);
+            dest.setLogo(storeDto.getKey());
+        }
 
         cmsArticleManager.save(dest);
+
         messageHelper.addFlashMessage(redirectAttributes, "core.success.save",
                 "保存成功");
 
-        return "redirect:/cms/cms-article-list.do";
+        return "redirect:/cms/cms-article-list.do?filter_EQL_cmsCatalog.id="
+                + cmsCatalogId;
     }
 
+    /**
+     * 删除文章.
+     */
     @RequestMapping("cms-article-remove")
     public String remove(@RequestParam("selectedItem") List<Long> selectedItem,
             RedirectAttributes redirectAttributes) {
         List<CmsArticle> cmsArticles = cmsArticleManager
                 .findByIds(selectedItem);
-        cmsArticleManager.removeAll(cmsArticles);
+
+        for (CmsArticle cmsArticle : cmsArticles) {
+            cmsCommentManager.removeAll(cmsArticle.getCmsComments());
+            cmsArticleManager.remove(cmsArticle);
+        }
+
         messageHelper.addFlashMessage(redirectAttributes,
                 "core.success.delete", "删除成功");
 
         return "redirect:/cms/cms-article-list.do";
     }
 
+    /**
+     * 导出
+     */
     @RequestMapping("cms-article-export")
     public void export(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap,
-            HttpServletResponse response) throws Exception {
+            HttpServletRequest request, HttpServletResponse response)
+            throws Exception {
+        String tenantId = tenantHolder.getTenantId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
+        propertyFilters.add(new PropertyFilter("EQS_tenantId", tenantId));
         page = cmsArticleManager.pagedQuery(page, propertyFilters);
 
         List<CmsArticle> cmsArticles = (List<CmsArticle>) page.getResult();
@@ -135,20 +209,24 @@ public class CmsArticleController {
         tableModel.setName("cmsArticle");
         tableModel.addHeaders("id", "name");
         tableModel.setData(cmsArticles);
-        exportor.export(response, tableModel);
+        exportor.export(request, response, tableModel);
     }
 
+    /**
+     * 检查重名.
+     */
     @RequestMapping("cms-article-checkName")
     @ResponseBody
     public boolean checkName(@RequestParam("name") String name,
             @RequestParam(value = "id", required = false) Long id)
             throws Exception {
-        String hql = "from CmsArticle where name=?";
-        Object[] params = { name };
+        String tenantId = tenantHolder.getTenantId();
+        String hql = "from CmsArticle where name=? and tenantId=?";
+        Object[] params = { name, tenantId };
 
         if (id != null) {
-            hql = "from CmsArticle where name=? and id<>?";
-            params = new Object[] { name, id };
+            hql = "from CmsArticle where name=? and tenantId=? and id<>?";
+            params = new Object[] { name, tenantId, id };
         }
 
         CmsArticle cmsArticle = cmsArticleManager.findUnique(hql, params);
@@ -158,33 +236,80 @@ public class CmsArticleController {
         return result;
     }
 
+    /**
+     * 发布.
+     */
     @RequestMapping("cms-article-publish")
     public String publish(@RequestParam("id") Long id) {
         CmsArticle cmsArticle = cmsArticleManager.get(id);
         cmsArticle.setPublishTime(new Date());
         cmsArticle.setStatus(1);
         renderService.render(cmsArticle);
+        cmsArticleManager.save(cmsArticle);
 
-        return "redirect:/cms/cms-article-list.do";
+        return "redirect:/cms/cms-article-list.do?filter_EQL_cmsCatalog.id="
+                + cmsArticle.getCmsCatalog().getId();
     }
 
-    @RequestMapping("cms-article-view")
-    public String view(@RequestParam("id") Long id, Model model) {
+    /**
+     * 下线.
+     */
+    @RequestMapping("cms-article-withdraw")
+    public String withdraw(@RequestParam("id") Long id) {
         CmsArticle cmsArticle = cmsArticleManager.get(id);
-        String html = renderService.view(cmsArticle);
+        cmsArticle.setStatus(0);
+        renderService.render(cmsArticle);
+        cmsArticleManager.save(cmsArticle);
+
+        return "redirect:/cms/cms-article-list.do?filter_EQL_cmsCatalog.id="
+                + cmsArticle.getCmsCatalog().getId();
+    }
+
+    /**
+     * 查看.
+     */
+    @RequestMapping("cms-article-view")
+    public String view(@RequestParam("id") Long id, @ModelAttribute Page page,
+            Model model) {
+        List<CmsCatalog> cmsCatalogs = this.cmsCatalogManager.getAll();
+        CmsArticle cmsArticle = this.cmsArticleManager.get(id);
+        page = this.cmsCommentManager
+                .pagedQuery(
+                        "from CmsComment where cmsArticle=? and conversation=null order by id desc",
+                        page.getPageNo(), page.getPageSize(), cmsArticle);
+
+        List<CmsComment> cmsComments = (List<CmsComment>) page.getResult();
+
+        List<CommentDTO> commentDtos = new ArrayList<CommentDTO>();
+        page.setResult(commentDtos);
+
+        for (CmsComment cmsComment : cmsComments) {
+            CommentDTO commentDto = new CommentDTO();
+            commentDto.setCmsComment(cmsComment);
+
+            String hql = "from CmsComment where conversation=? order by id asc";
+            commentDto.setChildren(cmsCommentManager.find(hql,
+                    cmsComment.getId()));
+            commentDtos.add(commentDto);
+        }
+
+        String html = renderService.view(cmsArticle, cmsCatalogs, page);
 
         model.addAttribute("html", html);
 
         return "cms/cms-article-view";
     }
 
+    /**
+     * 上传图片.
+     */
     @RequestMapping("cms-article-uploadImage")
     @ResponseBody
     public String uploadImage(@RequestParam("CKEditorFuncNum") String callback,
             @RequestParam("upload") MultipartFile attachment) throws Exception {
-        StoreDTO storeDto = storeConnector.save("cms/html/r/images",
-                new MultipartFileResource(attachment),
-                attachment.getOriginalFilename());
+        String tenantId = tenantHolder.getTenantId();
+        StoreDTO storeDto = storeClient.saveStore("cms/html/r/images",
+                new MultipartFileDataSource(attachment), tenantId);
 
         return "<script type='text/javascript'>"
                 + "window.parent.CKEDITOR.tools.callFunction(" + callback
@@ -192,6 +317,9 @@ public class CmsArticleController {
                 + "</script>";
     }
 
+    /**
+     * 下载.
+     */
     @RequestMapping("cms-article-download")
     @ResponseBody
     public String download(@RequestParam("id") Long id) throws Exception {
@@ -214,13 +342,16 @@ public class CmsArticleController {
         return jsonMapper.toJson(data);
     }
 
+    /**
+     * 上传.
+     */
     @RequestMapping("cms-article-upload")
     @ResponseBody
     public String upload(@RequestParam("id") Long id,
             @RequestParam("files[]") MultipartFile attachment) throws Exception {
-        StoreDTO storeDto = storeConnector.save("cms/html/r/image",
-                new MultipartFileResource(attachment),
-                attachment.getOriginalFilename());
+        String tenantId = tenantHolder.getTenantId();
+        StoreDTO storeDto = storeClient.saveStore("cms/html/r/image",
+                new MultipartFileDataSource(attachment), tenantId);
         CmsArticle cmsArticle = cmsArticleManager.get(id);
         CmsAttachment cmsAttachment = new CmsAttachment();
         cmsAttachment.setCmsArticle(cmsArticle);
@@ -241,11 +372,20 @@ public class CmsArticleController {
         return jsonMapper.toJson(data);
     }
 
+    /**
+     * 图库类文章.
+     */
     @RequestMapping("cms-article-image")
     public String imageArticle(
             @RequestParam(value = "id", required = false) Long id, Model model) {
+        String tenantId = tenantHolder.getTenantId();
+
         if (id == null) {
             CmsArticle cmsArticle = new CmsArticle();
+            cmsArticle.setUserId(currentUserHolder.getUserId());
+            cmsArticle.setCreateTime(new Date());
+            cmsArticle.setTenantId(tenantId);
+            cmsArticle.setContent("");
             cmsArticle.setType(CmsConstants.TYPE_IMAGE);
             cmsArticleManager.save(cmsArticle);
             model.addAttribute("model", cmsArticle);
@@ -254,16 +394,26 @@ public class CmsArticleController {
             model.addAttribute("model", cmsArticle);
         }
 
-        model.addAttribute("cmsCatalogs", cmsCatalogManager.getAll());
+        model.addAttribute("cmsCatalogs",
+                cmsCatalogManager.findBy("tenantId", tenantId));
 
         return "cms/cms-article-image";
     }
 
+    /**
+     * 音频类文章.
+     */
     @RequestMapping("cms-article-audio")
     public String audioArticle(
             @RequestParam(value = "id", required = false) Long id, Model model) {
+        String tenantId = tenantHolder.getTenantId();
+
         if (id == null) {
             CmsArticle cmsArticle = new CmsArticle();
+            cmsArticle.setUserId(currentUserHolder.getUserId());
+            cmsArticle.setCreateTime(new Date());
+            cmsArticle.setTenantId(tenantId);
+            cmsArticle.setContent("");
             cmsArticle.setType(CmsConstants.TYPE_AUDIO);
             cmsArticleManager.save(cmsArticle);
             model.addAttribute("model", cmsArticle);
@@ -272,16 +422,26 @@ public class CmsArticleController {
             model.addAttribute("model", cmsArticle);
         }
 
-        model.addAttribute("cmsCatalogs", cmsCatalogManager.getAll());
+        model.addAttribute("cmsCatalogs",
+                cmsCatalogManager.findBy("tenantId", tenantId));
 
         return "cms/cms-article-audio";
     }
 
+    /**
+     * 视频文章.
+     */
     @RequestMapping("cms-article-video")
     public String videoArticle(
             @RequestParam(value = "id", required = false) Long id, Model model) {
+        String tenantId = tenantHolder.getTenantId();
+
         if (id == null) {
             CmsArticle cmsArticle = new CmsArticle();
+            cmsArticle.setUserId(currentUserHolder.getUserId());
+            cmsArticle.setCreateTime(new Date());
+            cmsArticle.setTenantId(tenantId);
+            cmsArticle.setContent("");
             cmsArticle.setType(CmsConstants.TYPE_VIDEO);
             cmsArticleManager.save(cmsArticle);
             model.addAttribute("model", cmsArticle);
@@ -290,9 +450,43 @@ public class CmsArticleController {
             model.addAttribute("model", cmsArticle);
         }
 
-        model.addAttribute("cmsCatalogs", cmsCatalogManager.getAll());
+        model.addAttribute("cmsCatalogs",
+                cmsCatalogManager.findBy("tenantId", tenantId));
 
         return "cms/cms-article-video";
+    }
+
+    /**
+     * 保存文章.
+     */
+    @RequestMapping("cms-article-update")
+    public String update(@ModelAttribute CmsArticle cmsArticle,
+            @RequestParam("cmsCatalogId") Long cmsCatalogId,
+            RedirectAttributes redirectAttributes) throws Exception {
+        String tenantId = tenantHolder.getTenantId();
+        Long id = cmsArticle.getId();
+        CmsArticle dest = null;
+
+        if (id != null) {
+            dest = cmsArticleManager.get(id);
+            beanMapper.copy(cmsArticle, dest);
+        } else {
+            dest = cmsArticle;
+        }
+
+        if (id == null) {
+            dest.setUserId(currentUserHolder.getUserId());
+            dest.setCreateTime(new Date());
+            dest.setTenantId(tenantId);
+        }
+
+        dest.setCmsCatalog(cmsCatalogManager.get(cmsCatalogId));
+        cmsArticleManager.save(dest);
+
+        messageHelper.addFlashMessage(redirectAttributes, "core.success.save",
+                "保存成功");
+
+        return "redirect:/cms/cms-article-list.do";
     }
 
     // ~ ======================================================================
@@ -313,6 +507,11 @@ public class CmsArticleController {
     }
 
     @Resource
+    public void setCmsCommentManager(CmsCommentManager cmsCommentManager) {
+        this.cmsCommentManager = cmsCommentManager;
+    }
+
+    @Resource
     public void setExportor(Exportor exportor) {
         this.exportor = exportor;
     }
@@ -328,12 +527,17 @@ public class CmsArticleController {
     }
 
     @Resource
-    public void setStoreConnector(StoreConnector storeConnector) {
-        this.storeConnector = storeConnector;
+    public void setStoreClient(StoreClient storeClient) {
+        this.storeClient = storeClient;
     }
 
     @Resource
     public void setCurrentUserHolder(CurrentUserHolder currentUserHolder) {
         this.currentUserHolder = currentUserHolder;
+    }
+
+    @Resource
+    public void setTenantHolder(TenantHolder tenantHolder) {
+        this.tenantHolder = tenantHolder;
     }
 }

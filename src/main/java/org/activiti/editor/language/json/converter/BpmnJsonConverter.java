@@ -12,11 +12,13 @@
  */
 package org.activiti.editor.language.json.converter;
 
+import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -29,33 +31,34 @@ import math.geom2d.Point2D;
 
 import math.geom2d.conic.Circle2D;
 
+import math.geom2d.curve.AbstractContinuousCurve2D;
+
 import math.geom2d.line.Line2D;
 
 import math.geom2d.polygon.Polyline2D;
 
-import org.activiti.bpmn.model.ActivitiListener;
 import org.activiti.bpmn.model.Activity;
+import org.activiti.bpmn.model.Artifact;
 import org.activiti.bpmn.model.BaseElement;
-import org.activiti.bpmn.model.BooleanDataObject;
 import org.activiti.bpmn.model.BoundaryEvent;
 import org.activiti.bpmn.model.BpmnModel;
-import org.activiti.bpmn.model.DateDataObject;
-import org.activiti.bpmn.model.DoubleDataObject;
-import org.activiti.bpmn.model.EventListener;
-import org.activiti.bpmn.model.FieldExtension;
+import org.activiti.bpmn.model.Event;
+import org.activiti.bpmn.model.EventDefinition;
+import org.activiti.bpmn.model.ExtensionElement;
 import org.activiti.bpmn.model.FlowElement;
 import org.activiti.bpmn.model.FlowElementsContainer;
 import org.activiti.bpmn.model.FlowNode;
+import org.activiti.bpmn.model.Gateway;
 import org.activiti.bpmn.model.GraphicInfo;
-import org.activiti.bpmn.model.ImplementationType;
-import org.activiti.bpmn.model.IntegerDataObject;
-import org.activiti.bpmn.model.ItemDefinition;
 import org.activiti.bpmn.model.Lane;
-import org.activiti.bpmn.model.LongDataObject;
+import org.activiti.bpmn.model.Message;
+import org.activiti.bpmn.model.MessageEventDefinition;
+import org.activiti.bpmn.model.MessageFlow;
 import org.activiti.bpmn.model.Pool;
 import org.activiti.bpmn.model.Process;
 import org.activiti.bpmn.model.SequenceFlow;
-import org.activiti.bpmn.model.StringDataObject;
+import org.activiti.bpmn.model.Signal;
+import org.activiti.bpmn.model.SignalEventDefinition;
 import org.activiti.bpmn.model.SubProcess;
 import org.activiti.bpmn.model.ValuedDataObject;
 
@@ -63,6 +66,7 @@ import org.activiti.editor.constants.EditorJsonConstants;
 import org.activiti.editor.constants.StencilConstants;
 import org.activiti.editor.language.json.converter.util.JsonConverterUtil;
 
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import org.slf4j.Logger;
@@ -77,8 +81,11 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             .getLogger(BpmnJsonConverter.class);
     protected static Map<Class<? extends BaseElement>, Class<? extends BaseBpmnJsonConverter>> convertersToJsonMap = new HashMap<Class<? extends BaseElement>, Class<? extends BaseBpmnJsonConverter>>();
     protected static Map<String, Class<? extends BaseBpmnJsonConverter>> convertersToBpmnMap = new HashMap<String, Class<? extends BaseBpmnJsonConverter>>();
-    private static SimpleDateFormat sdf = new SimpleDateFormat(
-            "yyyy-MM-dd'T'HH:mm:ss");
+    public static final String MODELER_NAMESPACE = "http://activiti.com/modeler";
+    protected static final DateFormat defaultFormat = new SimpleDateFormat(
+            "yyyyMMddHHmmss");
+    protected static final DateFormat entFormat = new SimpleDateFormat(
+            "yyyyMMddHHmmssSSS");
 
     static {
         // start and end events
@@ -89,6 +96,10 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
         // connectors
         SequenceFlowJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        MessageFlowJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        AssociationJsonConverter.fillTypes(convertersToBpmnMap,
                 convertersToJsonMap);
 
         // task types
@@ -107,6 +118,12 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         UserTaskJsonConverter.fillTypes(convertersToBpmnMap,
                 convertersToJsonMap);
         CallActivityJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        CamelTaskJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        MuleTaskJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        SendTaskJsonConverter.fillTypes(convertersToBpmnMap,
                 convertersToJsonMap);
 
         // gateways
@@ -136,6 +153,12 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         // boundary events
         BoundaryEventJsonConverter.fillTypes(convertersToBpmnMap,
                 convertersToJsonMap);
+
+        // artifacts
+        TextAnnotationJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
+        DataStoreJsonConverter.fillTypes(convertersToBpmnMap,
+                convertersToJsonMap);
     }
 
     private static final List<String> DI_CIRCLES = new ArrayList<String>();
@@ -147,11 +170,14 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         DI_CIRCLES.add(STENCIL_EVENT_START_MESSAGE);
         DI_CIRCLES.add(STENCIL_EVENT_START_NONE);
         DI_CIRCLES.add(STENCIL_EVENT_START_TIMER);
+        DI_CIRCLES.add(STENCIL_EVENT_START_SIGNAL);
 
         DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_ERROR);
         DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_SIGNAL);
         DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_TIMER);
         DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_MESSAGE);
+        DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_CANCEL);
+        DI_CIRCLES.add(STENCIL_EVENT_BOUNDARY_COMPENSATION);
 
         DI_CIRCLES.add(STENCIL_EVENT_CATCH_MESSAGE);
         DI_CIRCLES.add(STENCIL_EVENT_CATCH_SIGNAL);
@@ -162,6 +188,8 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
         DI_CIRCLES.add(STENCIL_EVENT_END_NONE);
         DI_CIRCLES.add(STENCIL_EVENT_END_ERROR);
+        DI_CIRCLES.add(STENCIL_EVENT_END_CANCEL);
+        DI_CIRCLES.add(STENCIL_EVENT_END_TERMINATE);
 
         DI_RECTANGLES.add(STENCIL_CALL_ACTIVITY);
         DI_RECTANGLES.add(STENCIL_SUB_PROCESS);
@@ -171,8 +199,12 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         DI_RECTANGLES.add(STENCIL_TASK_MANUAL);
         DI_RECTANGLES.add(STENCIL_TASK_RECEIVE);
         DI_RECTANGLES.add(STENCIL_TASK_SCRIPT);
+        DI_RECTANGLES.add(STENCIL_TASK_SEND);
         DI_RECTANGLES.add(STENCIL_TASK_SERVICE);
         DI_RECTANGLES.add(STENCIL_TASK_USER);
+        DI_RECTANGLES.add(STENCIL_TASK_CAMEL);
+        DI_RECTANGLES.add(STENCIL_TASK_MULE);
+        DI_RECTANGLES.add(STENCIL_TEXT_ANNOTATION);
 
         DI_GATEWAY.add(STENCIL_GATEWAY_EVENT);
         DI_GATEWAY.add(STENCIL_GATEWAY_EXCLUSIVE);
@@ -184,8 +216,32 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
     public ObjectNode convertToJson(BpmnModel model) {
         ObjectNode modelNode = objectMapper.createObjectNode();
+        double maxX = 0.0;
+        double maxY = 0.0;
+
+        for (GraphicInfo flowInfo : model.getLocationMap().values()) {
+            if ((flowInfo.getX() + flowInfo.getWidth()) > maxX) {
+                maxX = flowInfo.getX() + flowInfo.getWidth();
+            }
+
+            if ((flowInfo.getY() + flowInfo.getHeight()) > maxY) {
+                maxY = flowInfo.getY() + flowInfo.getHeight();
+            }
+        }
+
+        maxX += 50;
+        maxY += 50;
+
+        if (maxX < 1485) {
+            maxX = 1485;
+        }
+
+        if (maxY < 700) {
+            maxY = 700;
+        }
+
         modelNode.put("bounds",
-                BpmnJsonConverterUtil.createBoundsNode(1485, 1050, 0, 0));
+                BpmnJsonConverterUtil.createBoundsNode(maxX, maxY, 0, 0));
         modelNode.put("resourceId", "canvas");
 
         ObjectNode stencilNode = objectMapper.createObjectNode();
@@ -199,7 +255,13 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
         ArrayNode shapesArrayNode = objectMapper.createArrayNode();
 
-        Process mainProcess = model.getMainProcess();
+        Process mainProcess = null;
+
+        if (model.getPools().size() > 0) {
+            mainProcess = model.getProcess(model.getPools().get(0).getId());
+        } else {
+            mainProcess = model.getMainProcess();
+        }
 
         ObjectNode propertiesNode = objectMapper.createObjectNode();
 
@@ -211,36 +273,65 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             propertiesNode.put(PROPERTY_NAME, mainProcess.getName());
         }
 
-        if (mainProcess.isExecutable() == false) {
-            propertiesNode.put(PROPERTY_PROCESS_EXECUTABLE, PROPERTY_VALUE_NO);
-        }
-
-        propertiesNode.put(PROPERTY_PROCESS_NAMESPACE,
-                model.getTargetNamespace());
-
-        convertListenersToJson(mainProcess.getEventListeners(), propertiesNode);
-
         if (StringUtils.isNotEmpty(mainProcess.getDocumentation())) {
             propertiesNode.put(PROPERTY_DOCUMENTATION,
                     mainProcess.getDocumentation());
         }
 
-        if (!mainProcess.getDataObjects().isEmpty()) {
-            convertDataPropertiesToJson(mainProcess.getDataObjects(),
-                    propertiesNode);
+        if (mainProcess.isExecutable() == false) {
+            propertiesNode.put(PROPERTY_PROCESS_EXECUTABLE, "No");
+        }
+
+        if (StringUtils.isNoneEmpty(model.getTargetNamespace())) {
+            propertiesNode.put(PROPERTY_PROCESS_NAMESPACE,
+                    model.getTargetNamespace());
+        }
+
+        BpmnJsonConverterUtil.convertMessagesToJson(model.getMessages(),
+                propertiesNode);
+
+        BpmnJsonConverterUtil.convertListenersToJson(
+                mainProcess.getExecutionListeners(), true, propertiesNode);
+        BpmnJsonConverterUtil.convertEventListenersToJson(
+                mainProcess.getEventListeners(), propertiesNode);
+        BpmnJsonConverterUtil.convertSignalDefinitionsToJson(model,
+                propertiesNode);
+        BpmnJsonConverterUtil.convertMessagesToJson(model, propertiesNode);
+
+        if (CollectionUtils.isNotEmpty(mainProcess.getDataObjects())) {
+            BpmnJsonConverterUtil.convertDataPropertiesToJson(
+                    mainProcess.getDataObjects(), propertiesNode);
         }
 
         modelNode.put(EDITOR_SHAPE_PROPERTIES, propertiesNode);
 
-        if (!model.getPools().isEmpty()) {
+        boolean poolHasDI = false;
+
+        if (model.getPools().size() > 0) {
             for (Pool pool : model.getPools()) {
-                GraphicInfo poolGraphicInfo = model
-                        .getGraphicInfo(pool.getId());
+                GraphicInfo graphicInfo = model.getGraphicInfo(pool.getId());
+
+                if (graphicInfo != null) {
+                    poolHasDI = true;
+
+                    break;
+                }
+            }
+        }
+
+        if ((model.getPools().size() > 0) && poolHasDI) {
+            for (Pool pool : model.getPools()) {
+                GraphicInfo graphicInfo = model.getGraphicInfo(pool.getId());
+
+                if (graphicInfo == null) {
+                    continue;
+                }
+
                 ObjectNode poolNode = BpmnJsonConverterUtil.createChildShape(
-                        pool.getId(), STENCIL_POOL, poolGraphicInfo.getX()
-                                + poolGraphicInfo.getWidth(),
-                        poolGraphicInfo.getY() + poolGraphicInfo.getHeight(),
-                        poolGraphicInfo.getX(), poolGraphicInfo.getY());
+                        pool.getId(), STENCIL_POOL, graphicInfo.getX()
+                                + graphicInfo.getWidth(), graphicInfo.getY()
+                                + graphicInfo.getHeight(), graphicInfo.getX(),
+                        graphicInfo.getY());
                 shapesArrayNode.add(poolNode);
 
                 ObjectNode poolPropertiesNode = objectMapper.createObjectNode();
@@ -258,22 +349,26 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                 }
 
                 poolNode.put(EDITOR_SHAPE_PROPERTIES, poolPropertiesNode);
-                poolNode.put(EDITOR_OUTGOING, objectMapper.createArrayNode());
 
                 ArrayNode laneShapesArrayNode = objectMapper.createArrayNode();
                 poolNode.put(EDITOR_CHILD_SHAPES, laneShapesArrayNode);
 
+                ArrayNode outgoingArrayNode = objectMapper.createArrayNode();
+                poolNode.put("outgoing", outgoingArrayNode);
+
                 Process process = model.getProcess(pool.getId());
 
                 if (process != null) {
-                    processFlowElements(
-                            process.findFlowElementsOfType(SequenceFlow.class),
-                            model, shapesArrayNode, poolGraphicInfo.getX(),
-                            poolGraphicInfo.getY());
+                    Map<String, ArrayNode> laneMap = new HashMap<String, ArrayNode>();
 
                     for (Lane lane : process.getLanes()) {
                         GraphicInfo laneGraphicInfo = model.getGraphicInfo(lane
                                 .getId());
+
+                        if (laneGraphicInfo == null) {
+                            continue;
+                        }
+
                         ObjectNode laneNode = BpmnJsonConverterUtil
                                 .createChildShape(lane.getId(), STENCIL_LANE,
                                         laneGraphicInfo.getX()
@@ -301,36 +396,64 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                                 .createArrayNode();
                         laneNode.put(EDITOR_CHILD_SHAPES,
                                 elementShapesArrayNode);
-                        laneNode.put(EDITOR_OUTGOING,
-                                objectMapper.createArrayNode());
+                        laneNode.put("outgoing", objectMapper.createArrayNode());
 
-                        for (FlowElement flowElement : process
-                                .getFlowElements()) {
+                        laneMap.put(lane.getId(), elementShapesArrayNode);
+                    }
+
+                    for (FlowElement flowElement : process.getFlowElements()) {
+                        Lane laneForElement = null;
+                        GraphicInfo laneGraphicInfo = null;
+
+                        FlowElement lookForElement = null;
+
+                        if (flowElement instanceof SequenceFlow) {
+                            SequenceFlow sequenceFlow = (SequenceFlow) flowElement;
+                            lookForElement = model.getFlowElement(sequenceFlow
+                                    .getSourceRef());
+                        } else {
+                            lookForElement = flowElement;
+                        }
+
+                        for (Lane lane : process.getLanes()) {
                             if (lane.getFlowReferences().contains(
-                                    flowElement.getId())) {
-                                Class<? extends BaseBpmnJsonConverter> converter = convertersToJsonMap
-                                        .get(flowElement.getClass());
+                                    lookForElement.getId())) {
+                                laneGraphicInfo = model.getGraphicInfo(lane
+                                        .getId());
 
-                                if (converter != null) {
-                                    try {
-                                        converter.newInstance().convertToJson(
-                                                flowElement, this, model,
-                                                elementShapesArrayNode,
-                                                laneGraphicInfo.getX(),
-                                                laneGraphicInfo.getY());
-                                    } catch (Exception e) {
-                                        LOGGER.error("Error converting {}",
-                                                flowElement, e);
-                                    }
+                                if (laneGraphicInfo != null) {
+                                    laneForElement = lane;
                                 }
+
+                                break;
                             }
                         }
+
+                        if (flowElement instanceof SequenceFlow
+                                || (laneForElement != null)) {
+                            processFlowElement(flowElement, process, model,
+                                    laneMap.get(laneForElement.getId()),
+                                    laneGraphicInfo.getX(),
+                                    laneGraphicInfo.getY());
+                        }
+                    }
+
+                    processArtifacts(process, model, shapesArrayNode, 0.0, 0.0);
+                }
+
+                for (MessageFlow messageFlow : model.getMessageFlows().values()) {
+                    if (messageFlow.getSourceRef().equals(pool.getId())) {
+                        outgoingArrayNode.add(BpmnJsonConverterUtil
+                                .createResourceNode(messageFlow.getId()));
                     }
                 }
             }
+
+            processMessageFlows(model, shapesArrayNode);
         } else {
-            processFlowElements(model.getMainProcess().getFlowElements(),
-                    model, shapesArrayNode, 0.0, 0.0);
+            processFlowElements(model.getMainProcess(), model, shapesArrayNode,
+                    0.0, 0.0);
+            processMessageFlows(model, shapesArrayNode);
         }
 
         modelNode.put(EDITOR_CHILD_SHAPES, shapesArrayNode);
@@ -338,31 +461,72 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         return modelNode;
     }
 
-    @Override
-    public void processFlowElements(
-            Collection<? extends FlowElement> flowElements, BpmnModel model,
-            ArrayNode shapesArrayNode, double subProcessX, double subProcessY) {
-        for (FlowElement flowElement : flowElements) {
+    public void processFlowElements(FlowElementsContainer container,
+            BpmnModel model, ArrayNode shapesArrayNode, double subProcessX,
+            double subProcessY) {
+        for (FlowElement flowElement : container.getFlowElements()) {
+            processFlowElement(flowElement, container, model, shapesArrayNode,
+                    subProcessX, subProcessY);
+        }
+
+        processArtifacts(container, model, shapesArrayNode, subProcessX,
+                subProcessY);
+    }
+
+    protected void processFlowElement(FlowElement flowElement,
+            FlowElementsContainer container, BpmnModel model,
+            ArrayNode shapesArrayNode, double containerX, double containerY) {
+        Class<? extends BaseBpmnJsonConverter> converter = convertersToJsonMap
+                .get(flowElement.getClass());
+
+        if (converter != null) {
+            try {
+                converter.newInstance().convertToJson(flowElement, this, model,
+                        container, shapesArrayNode, containerX, containerY);
+            } catch (Exception e) {
+                LOGGER.error("Error converting {}", flowElement, e);
+            }
+        }
+    }
+
+    protected void processArtifacts(FlowElementsContainer container,
+            BpmnModel model, ArrayNode shapesArrayNode, double containerX,
+            double containerY) {
+        for (Artifact artifact : container.getArtifacts()) {
             Class<? extends BaseBpmnJsonConverter> converter = convertersToJsonMap
-                    .get(flowElement.getClass());
+                    .get(artifact.getClass());
 
             if (converter != null) {
                 try {
-                    converter.newInstance().convertToJson(flowElement, this,
-                            model, shapesArrayNode, subProcessX, subProcessY);
+                    converter.newInstance().convertToJson(artifact, this,
+                            model, container, shapesArrayNode, containerX,
+                            containerY);
                 } catch (Exception e) {
-                    LOGGER.error("Error converting {}", flowElement, e);
+                    LOGGER.error("Error converting {}", artifact, e);
                 }
             }
         }
     }
 
+    protected void processMessageFlows(BpmnModel model,
+            ArrayNode shapesArrayNode) {
+        for (MessageFlow messageFlow : model.getMessageFlows().values()) {
+            MessageFlowJsonConverter jsonConverter = new MessageFlowJsonConverter();
+            jsonConverter.convertToJson(messageFlow, this, model, null,
+                    shapesArrayNode, 0.0, 0.0);
+        }
+    }
+
     public BpmnModel convertToBpmnModel(JsonNode modelNode) {
         BpmnModel bpmnModel = new BpmnModel();
+
+        bpmnModel.setTargetNamespace("http://activiti.org/test");
+
         Map<String, JsonNode> shapeMap = new HashMap<String, JsonNode>();
         Map<String, JsonNode> sourceRefMap = new HashMap<String, JsonNode>();
         Map<String, JsonNode> edgeMap = new HashMap<String, JsonNode>();
         Map<String, List<JsonNode>> sourceAndTargetMap = new HashMap<String, List<JsonNode>>();
+
         readShapeDI(modelNode, 0, 0, shapeMap, sourceRefMap, bpmnModel);
         filterAllEdges(modelNode, edgeMap, sourceAndTargetMap, shapeMap,
                 sourceRefMap);
@@ -371,7 +535,12 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         ArrayNode shapesArrayNode = (ArrayNode) modelNode
                 .get(EDITOR_CHILD_SHAPES);
 
-        boolean emptyPoolFound = true;
+        if ((shapesArrayNode == null) || (shapesArrayNode.size() == 0)) {
+            return bpmnModel;
+        }
+
+        boolean nonEmptyPoolFound = false;
+        Map<String, Lane> elementInLaneMap = new HashMap<String, Lane>();
 
         // first create the pool structure
         for (JsonNode shapeNode : shapesArrayNode) {
@@ -394,9 +563,6 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                 process.setExecutable(pool.isExecutable());
                 bpmnModel.addProcess(process);
 
-                processJsonElements(shapesArrayNode, modelNode, process,
-                        shapeMap);
-
                 ArrayNode laneArrayNode = (ArrayNode) shapeNode
                         .get(EDITOR_CHILD_SHAPES);
 
@@ -406,7 +572,7 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                             .getStencilId(laneNode);
 
                     if (STENCIL_LANE.equals(laneStencilId)) {
-                        emptyPoolFound = false;
+                        nonEmptyPoolFound = true;
 
                         Lane lane = new Lane();
                         lane.setId(BpmnJsonConverterUtil.getElementId(laneNode));
@@ -417,30 +583,71 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                         process.getLanes().add(lane);
 
                         processJsonElements(laneNode.get(EDITOR_CHILD_SHAPES),
-                                modelNode, lane, shapeMap);
+                                modelNode, lane, shapeMap, bpmnModel);
+
+                        if (CollectionUtils
+                                .isNotEmpty(lane.getFlowReferences())) {
+                            for (String elementRef : lane.getFlowReferences()) {
+                                elementInLaneMap.put(elementRef, lane);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        if (emptyPoolFound) {
-            JsonNode processIdNode = JsonConverterUtil.getProperty(
-                    PROPERTY_PROCESS_ID, modelNode);
+        // Signal Definitions exist on the root level
+        JsonNode signalDefinitionNode = BpmnJsonConverterUtil.getProperty(
+                PROPERTY_SIGNAL_DEFINITIONS, modelNode);
+        signalDefinitionNode = BpmnJsonConverterUtil
+                .validateIfNodeIsTextual(signalDefinitionNode);
+        signalDefinitionNode = BpmnJsonConverterUtil
+                .validateIfNodeIsTextual(signalDefinitionNode); // no idea why this needs to be done twice ..
+
+        if (signalDefinitionNode != null) {
+            if (signalDefinitionNode instanceof ArrayNode) {
+                ArrayNode signalDefinitionArrayNode = (ArrayNode) signalDefinitionNode;
+                Iterator<JsonNode> signalDefinitionIterator = signalDefinitionArrayNode
+                        .iterator();
+
+                while (signalDefinitionIterator.hasNext()) {
+                    JsonNode signalDefinitionJsonNode = signalDefinitionIterator
+                            .next();
+                    String signalId = signalDefinitionJsonNode.get(
+                            PROPERTY_SIGNAL_DEFINITION_ID).asText();
+                    String signalName = signalDefinitionJsonNode.get(
+                            PROPERTY_SIGNAL_DEFINITION_NAME).asText();
+                    String signalScope = signalDefinitionJsonNode.get(
+                            PROPERTY_SIGNAL_DEFINITION_SCOPE).asText();
+
+                    Signal signal = new Signal();
+                    signal.setId(signalId);
+                    signal.setName(signalName);
+                    signal.setScope((signalScope.toLowerCase()
+                            .equals("processinstance")) ? Signal.SCOPE_PROCESS_INSTANCE
+                            : Signal.SCOPE_GLOBAL);
+                    bpmnModel.addSignal(signal);
+                }
+            }
+        }
+
+        if (nonEmptyPoolFound == false) {
             Process process = new Process();
             bpmnModel.getProcesses().add(process);
+            process.setId(BpmnJsonConverterUtil.getPropertyValueAsString(
+                    PROPERTY_PROCESS_ID, modelNode));
+            process.setName(BpmnJsonConverterUtil.getPropertyValueAsString(
+                    PROPERTY_NAME, modelNode));
 
-            if ((processIdNode != null)
-                    && StringUtils.isNotEmpty(processIdNode.asText())) {
-                process.setId(processIdNode.asText());
+            String namespace = BpmnJsonConverterUtil.getPropertyValueAsString(
+                    PROPERTY_PROCESS_NAMESPACE, modelNode);
+
+            if (StringUtils.isNotEmpty(namespace)) {
+                bpmnModel.setTargetNamespace(namespace);
             }
 
-            JsonNode processNameNode = JsonConverterUtil.getProperty(
-                    PROPERTY_NAME, modelNode);
-
-            if ((processNameNode != null)
-                    && StringUtils.isNotEmpty(processNameNode.asText())) {
-                process.setName(processNameNode.asText());
-            }
+            process.setDocumentation(BpmnJsonConverterUtil
+                    .getPropertyValueAsString(PROPERTY_DOCUMENTATION, modelNode));
 
             JsonNode processExecutableNode = JsonConverterUtil.getProperty(
                     PROPERTY_PROCESS_EXECUTABLE, modelNode);
@@ -452,41 +659,62 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                                 modelNode));
             }
 
-            JsonNode processTargetNamespace = JsonConverterUtil.getProperty(
-                    PROPERTY_PROCESS_NAMESPACE, modelNode);
+            BpmnJsonConverterUtil.convertJsonToMessages(modelNode, bpmnModel);
 
-            if ((processTargetNamespace != null)
-                    && StringUtils.isNotEmpty(processTargetNamespace.asText())) {
-                bpmnModel.setTargetNamespace(processTargetNamespace.asText());
-            }
+            BpmnJsonConverterUtil.convertJsonToListeners(modelNode, process);
 
-            JsonNode processExecutionListenerNode = modelNode.get(
-                    EDITOR_SHAPE_PROPERTIES).get(PROPERTY_EXECUTION_LISTENERS);
+            JsonNode eventListenersNode = BpmnJsonConverterUtil.getProperty(
+                    PROPERTY_EVENT_LISTENERS, modelNode);
 
-            if ((processExecutionListenerNode != null)
-                    && StringUtils.isNotEmpty(processExecutionListenerNode
-                            .asText())) {
-                process.setExecutionListeners(convertJsonToListeners(processExecutionListenerNode));
-            }
-
-            JsonNode processEventListenerNode = modelNode.get(
-                    EDITOR_SHAPE_PROPERTIES).get(PROPERTY_EVENT_LISTENERS);
-
-            if (processEventListenerNode != null) {
-                process.setEventListeners(convertJsonToEventListeners(processEventListenerNode));
+            if (eventListenersNode != null) {
+                eventListenersNode = BpmnJsonConverterUtil
+                        .validateIfNodeIsTextual(eventListenersNode);
+                BpmnJsonConverterUtil.parseEventListeners(
+                        eventListenersNode.get(PROPERTY_EVENTLISTENER_VALUE),
+                        process);
             }
 
             JsonNode processDataPropertiesNode = modelNode.get(
                     EDITOR_SHAPE_PROPERTIES).get(PROPERTY_DATA_PROPERTIES);
 
             if (processDataPropertiesNode != null) {
-                List<ValuedDataObject> dataObjects = convertJsonToDataProperties(
-                        processDataPropertiesNode, process);
+                List<ValuedDataObject> dataObjects = BpmnJsonConverterUtil
+                        .convertJsonToDataProperties(processDataPropertiesNode,
+                                process);
                 process.setDataObjects(dataObjects);
                 process.getFlowElements().addAll(dataObjects);
             }
 
-            processJsonElements(shapesArrayNode, modelNode, process, shapeMap);
+            processJsonElements(shapesArrayNode, modelNode, process, shapeMap,
+                    bpmnModel);
+        } else {
+            // sequence flows are on root level so need additional parsing for pools
+            for (JsonNode shapeNode : shapesArrayNode) {
+                if (STENCIL_SEQUENCE_FLOW
+                        .equalsIgnoreCase(BpmnJsonConverterUtil
+                                .getStencilId(shapeNode))
+                        || STENCIL_ASSOCIATION
+                                .equalsIgnoreCase(BpmnJsonConverterUtil
+                                        .getStencilId(shapeNode))) {
+                    String sourceRef = BpmnJsonConverterUtil.lookForSourceRef(
+                            shapeNode.get(EDITOR_SHAPE_ID).asText(),
+                            modelNode.get(EDITOR_CHILD_SHAPES));
+
+                    if (sourceRef != null) {
+                        Lane lane = elementInLaneMap.get(sourceRef);
+                        SequenceFlowJsonConverter flowConverter = new SequenceFlowJsonConverter();
+
+                        if (lane != null) {
+                            flowConverter.convertToBpmnModel(shapeNode,
+                                    modelNode, this, lane, shapeMap, bpmnModel);
+                        } else {
+                            flowConverter.convertToBpmnModel(shapeNode,
+                                    modelNode, this, bpmnModel.getProcesses()
+                                            .get(0), shapeMap, bpmnModel);
+                        }
+                    }
+                }
+            }
         }
 
         // sequence flows are now all on root level
@@ -499,21 +727,21 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                 fillSubShapes(subShapesMap, subProcess);
             }
 
-            if (!subShapesMap.isEmpty()) {
+            if (subShapesMap.size() > 0) {
                 List<String> removeSubFlowsList = new ArrayList<String>();
-                List<SequenceFlow> sequenceFlowList = process
-                        .findFlowElementsOfType(SequenceFlow.class);
 
-                for (FlowElement flowElement : sequenceFlowList) {
+                for (FlowElement flowElement : process
+                        .findFlowElementsOfType(SequenceFlow.class)) {
                     SequenceFlow sequenceFlow = (SequenceFlow) flowElement;
 
-                    if ((process.getFlowElement(flowElement.getId()) != null)
-                            && subShapesMap.containsKey(sequenceFlow
-                                    .getSourceRef())) {
+                    if (subShapesMap.containsKey(sequenceFlow.getSourceRef())) {
                         SubProcess subProcess = subShapesMap.get(sequenceFlow
                                 .getSourceRef());
-                        subProcess.addFlowElement(sequenceFlow);
-                        removeSubFlowsList.add(sequenceFlow.getId());
+
+                        if (subProcess.getFlowElement(sequenceFlow.getId()) == null) {
+                            subProcess.addFlowElement(sequenceFlow);
+                            removeSubFlowsList.add(sequenceFlow.getId());
+                        }
                     }
                 }
 
@@ -523,362 +751,65 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             }
         }
 
-        // boundary events only contain attached ref id
+        Map<String, FlowWithContainer> allFlowMap = new HashMap<String, FlowWithContainer>();
+        List<Gateway> gatewayWithOrderList = new ArrayList<Gateway>();
+
+        // post handling of process elements
         for (Process process : bpmnModel.getProcesses()) {
-            postProcessElements(process, process.getFlowElements());
+            postProcessElements(process, process.getFlowElements(), edgeMap,
+                    bpmnModel, allFlowMap, gatewayWithOrderList);
+        }
+
+        // sort the sequence flows
+        for (Gateway gateway : gatewayWithOrderList) {
+            List<ExtensionElement> orderList = gateway.getExtensionElements()
+                    .get("EDITOR_FLOW_ORDER");
+
+            if (CollectionUtils.isNotEmpty(orderList)) {
+                for (ExtensionElement orderElement : orderList) {
+                    String flowValue = orderElement.getElementText();
+
+                    if (StringUtils.isNotEmpty(flowValue)) {
+                        if (allFlowMap.containsKey(flowValue)) {
+                            FlowWithContainer flowWithContainer = allFlowMap
+                                    .get(flowValue);
+                            flowWithContainer.getFlowContainer()
+                                    .removeFlowElement(
+                                            flowWithContainer.getSequenceFlow()
+                                                    .getId());
+                            flowWithContainer
+                                    .getFlowContainer()
+                                    .addFlowElement(
+                                            flowWithContainer.getSequenceFlow());
+                        }
+                    }
+                }
+            }
+
+            gateway.getExtensionElements().remove("EDITOR_FLOW_ORDER");
         }
 
         return bpmnModel;
     }
 
-    @Override
     public void processJsonElements(JsonNode shapesArrayNode,
             JsonNode modelNode, BaseElement parentElement,
-            Map<String, JsonNode> shapeMap) {
+            Map<String, JsonNode> shapeMap, BpmnModel bpmnModel) {
         for (JsonNode shapeNode : shapesArrayNode) {
+            String stencilId = BpmnJsonConverterUtil.getStencilId(shapeNode);
             Class<? extends BaseBpmnJsonConverter> converter = convertersToBpmnMap
-                    .get(BpmnJsonConverterUtil.getStencilId(shapeNode));
+                    .get(stencilId);
 
-            if (converter != null) {
-                try {
-                    converter.newInstance().convertToBpmnModel(shapeNode,
-                            modelNode, this, parentElement, shapeMap);
-                } catch (Exception e) {
-                    LOGGER.error("Error converting {}",
-                            BpmnJsonConverterUtil.getStencilId(shapeNode), e);
-                }
+            try {
+                BaseBpmnJsonConverter converterInstance = converter
+                        .newInstance();
+                converterInstance.convertToBpmnModel(shapeNode, modelNode,
+                        this, parentElement, shapeMap, bpmnModel);
+            } catch (Exception e) {
+                LOGGER.error("Error converting {}",
+                        BpmnJsonConverterUtil.getStencilId(shapeNode), e);
             }
         }
-    }
-
-    private List<ActivitiListener> convertJsonToListeners(JsonNode listenersNode) {
-        List<ActivitiListener> executionListeners = new ArrayList<ActivitiListener>();
-
-        try {
-            listenersNode = objectMapper.readTree(listenersNode.asText());
-        } catch (Exception e) {
-            LOGGER.info("Listeners node can not be read", e);
-        }
-
-        JsonNode itemsArrayNode = listenersNode
-                .get(EDITOR_PROPERTIES_GENERAL_ITEMS);
-
-        if (itemsArrayNode != null) {
-            for (JsonNode itemNode : itemsArrayNode) {
-                JsonNode typeNode = itemNode
-                        .get(PROPERTY_EXECUTION_LISTENER_EVENT);
-
-                if ((typeNode != null)
-                        && StringUtils.isNotEmpty(typeNode.asText())) {
-                    ActivitiListener listener = new ActivitiListener();
-                    listener.setEvent(typeNode.asText());
-
-                    if (StringUtils.isNotEmpty(itemNode.get(
-                            PROPERTY_EXECUTION_LISTENER_CLASS).asText())) {
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_CLASS);
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EXECUTION_LISTENER_CLASS).asText());
-                    } else if (StringUtils.isNotEmpty(itemNode.get(
-                            PROPERTY_EXECUTION_LISTENER_EXPRESSION).asText())) {
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_EXPRESSION);
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EXECUTION_LISTENER_EXPRESSION)
-                                .asText());
-                    } else if (StringUtils.isNotEmpty(itemNode.get(
-                            PROPERTY_EXECUTION_LISTENER_DELEGATEEXPRESSION)
-                            .asText())) {
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION);
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EXECUTION_LISTENER_DELEGATEEXPRESSION)
-                                .asText());
-                    }
-
-                    // resolve the listener feild
-                    JsonNode listenerFieldsNode = null;
-                    JsonNode listenerFieldsArrayNode = null;
-                    listenerFieldsNode = itemNode
-                            .get(PROPERTY_EXECUTION_LISTENER_FIELDS);
-
-                    if ((listenerFieldsNode != null)
-                            && StringUtils.isNotEmpty(listenerFieldsNode
-                                    .asText())
-                            && !("undefined"
-                                    .equals(listenerFieldsNode.asText()))) {
-                        if (listenerFieldsNode.isValueNode()) {
-                            try {
-                                listenerFieldsNode = objectMapper
-                                        .readTree(listenerFieldsNode.asText());
-                            } catch (Exception e) {
-                                LOGGER.info(
-                                        "Listener fields node can not be read",
-                                        e);
-                            }
-                        }
-                    }
-
-                    if (listenerFieldsNode != null) {
-                        listenerFieldsArrayNode = listenerFieldsNode
-                                .get(EDITOR_PROPERTIES_GENERAL_ITEMS);
-
-                        List<FieldExtension> fields = new ArrayList<FieldExtension>();
-
-                        if (listenerFieldsArrayNode != null) {
-                            for (JsonNode fieldNode : listenerFieldsArrayNode) {
-                                JsonNode fieldNameNode = fieldNode
-                                        .get(PROPERTY_EXECUTION_LISTENER_FIELD_NAME);
-
-                                if ((fieldNameNode != null)
-                                        && StringUtils.isNotEmpty(fieldNameNode
-                                                .asText())) {
-                                    FieldExtension field = new FieldExtension();
-                                    field.setFieldName(fieldNameNode.asText());
-                                    field.setStringValue(getValueAsString(
-                                            PROPERTY_EXECUTION_LISTENER_FIELD_VALUE,
-                                            fieldNode));
-                                    field.setExpression(getValueAsString(
-                                            PROPERTY_EXECUTION_LISTENER_EXPRESSION,
-                                            fieldNode));
-                                    fields.add(field);
-                                }
-                            }
-                        }
-
-                        listener.setFieldExtensions(fields);
-                    }
-
-                    executionListeners.add(listener);
-                }
-            }
-        }
-
-        return executionListeners;
-    }
-
-    private String getValueAsString(String name, JsonNode objectNode) {
-        String propertyValue = null;
-        JsonNode propertyNode = objectNode.get(name);
-
-        if ((propertyNode != null)
-                && ("null".equalsIgnoreCase(propertyNode.asText()) == false)) {
-            propertyValue = propertyNode.asText();
-        }
-
-        return propertyValue;
-    }
-
-    private List<EventListener> convertJsonToEventListeners(
-            JsonNode listenersNode) {
-        List<EventListener> eventListeners = new ArrayList<EventListener>();
-
-        if (StringUtils.isEmpty(listenersNode.asText())) {
-            return eventListeners;
-        }
-
-        try {
-            listenersNode = objectMapper.readTree(listenersNode.asText());
-        } catch (Exception e) {
-            LOGGER.info("Event listeners node can not be read", e);
-        }
-
-        JsonNode itemsArrayNode = listenersNode
-                .get(EDITOR_PROPERTIES_GENERAL_ITEMS);
-
-        if (itemsArrayNode != null) {
-            for (JsonNode itemNode : itemsArrayNode) {
-                EventListener listener = new EventListener();
-
-                if (isNotEmpty(PROPERTY_EVENT_LISTENER_EVENTS, itemNode)) {
-                    listener.setEvents(itemNode.get(
-                            PROPERTY_EVENT_LISTENER_EVENTS).asText());
-                }
-
-                if (isNotEmpty(PROPERTY_EVENT_LISTENER_ENTITY_TYPE, itemNode)) {
-                    listener.setEntityType(itemNode.get(
-                            PROPERTY_EVENT_LISTENER_ENTITY_TYPE).asText());
-                }
-
-                if (isNotEmpty(PROPERTY_EVENT_LISTENER_CLASS, itemNode)) {
-                    listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_CLASS);
-                    listener.setImplementation(itemNode.get(
-                            PROPERTY_EVENT_LISTENER_CLASS).asText());
-                } else if (isNotEmpty(
-                        PROPERTY_EVENT_LISTENER_DELEGATEEXPRESSION, itemNode)) {
-                    listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION);
-                    listener.setImplementation(itemNode.get(
-                            PROPERTY_EVENT_LISTENER_DELEGATEEXPRESSION)
-                            .asText());
-                } else if (isNotEmpty(PROPERTY_EVENT_LISTENER_THROW_EVENT,
-                        itemNode)) {
-                    String throwEventType = itemNode.get(
-                            PROPERTY_EVENT_LISTENER_THROW_EVENT).asText();
-
-                    if (PROPERTY_EVENT_LISTENER_THROW_SIGNAL
-                            .equals(throwEventType)) {
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EVENT_LISTENER_THROW_REFERENCE)
-                                .asText());
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_THROW_SIGNAL_EVENT);
-                    } else if (PROPERTY_EVENT_LISTENER_THROW_GLOBAL_SIGNAL
-                            .equals(throwEventType)) {
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EVENT_LISTENER_THROW_REFERENCE)
-                                .asText());
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_THROW_GLOBAL_SIGNAL_EVENT);
-                    } else if (PROPERTY_EVENT_LISTENER_THROW_MESSAGE
-                            .equals(throwEventType)) {
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EVENT_LISTENER_THROW_REFERENCE)
-                                .asText());
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_THROW_MESSAGE_EVENT);
-                    } else if (PROPERTY_EVENT_LISTENER_THROW_ERROR
-                            .equals(throwEventType)) {
-                        listener.setImplementation(itemNode.get(
-                                PROPERTY_EVENT_LISTENER_THROW_REFERENCE)
-                                .asText());
-                        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_THROW_ERROR_EVENT);
-                    } else {
-                        // Not a valid throw event type, ignore this listener definition
-                        listener = null;
-                    }
-                } else {
-                    // No properties have been provided to have a valid implementation
-                    listener = null;
-                }
-
-                if (listener != null) {
-                    eventListeners.add(listener);
-                }
-            }
-        }
-
-        return eventListeners;
-    }
-
-    protected List<ValuedDataObject> convertJsonToDataProperties(
-            JsonNode objectNode, BaseElement element) {
-        List<ValuedDataObject> dataObjects = new ArrayList<ValuedDataObject>();
-
-        if (objectNode != null) {
-            if (objectNode.isValueNode()
-                    && StringUtils.isNotEmpty(objectNode.asText())) {
-                try {
-                    objectNode = objectMapper.readTree(objectNode.asText());
-                } catch (Exception e) {
-                    LOGGER.info("Data properties node cannot be read", e);
-                }
-            }
-
-            JsonNode itemsArrayNode = objectNode
-                    .get(EDITOR_PROPERTIES_GENERAL_ITEMS);
-
-            if (itemsArrayNode != null) {
-                for (JsonNode dataNode : itemsArrayNode) {
-                    JsonNode dataIdNode = dataNode.get(PROPERTY_DATA_ID);
-
-                    if ((dataIdNode != null)
-                            && StringUtils.isNotEmpty(dataIdNode.asText())) {
-                        ValuedDataObject dataObject = null;
-                        ItemDefinition itemSubjectRef = new ItemDefinition();
-                        String dataType = dataNode.get(PROPERTY_DATA_TYPE)
-                                .asText();
-
-                        if (dataType.equals("string")) {
-                            dataObject = new StringDataObject();
-                        } else if (dataType.equals("int")) {
-                            dataObject = new IntegerDataObject();
-                        } else if (dataType.equals("long")) {
-                            dataObject = new LongDataObject();
-                        } else if (dataType.equals("double")) {
-                            dataObject = new DoubleDataObject();
-                        } else if (dataType.equals("boolean")) {
-                            dataObject = new BooleanDataObject();
-                        } else if (dataType.equals("datetime")) {
-                            dataObject = new DateDataObject();
-                        } else {
-                            LOGGER.error("Error converting {}",
-                                    dataIdNode.asText());
-                        }
-
-                        if (null != dataObject) {
-                            dataObject.setId(dataIdNode.asText());
-                            dataObject.setName(dataNode.get(PROPERTY_DATA_NAME)
-                                    .asText());
-
-                            itemSubjectRef.setStructureRef("xsd:" + dataType);
-                            dataObject.setItemSubjectRef(itemSubjectRef);
-
-                            if (dataObject instanceof DateDataObject) {
-                                try {
-                                    dataObject.setValue(sdf.parse(dataNode.get(
-                                            PROPERTY_DATA_VALUE).asText()));
-                                } catch (Exception e) {
-                                    LOGGER.error("Error converting {}",
-                                            dataObject.getName(), e);
-                                }
-                            } else {
-                                dataObject.setValue(dataNode.get(
-                                        PROPERTY_DATA_VALUE).asText());
-                            }
-
-                            dataObjects.add(dataObject);
-                        }
-                    }
-                }
-            }
-        }
-
-        return dataObjects;
-    }
-
-    protected void convertDataPropertiesToJson(
-            List<ValuedDataObject> dataObjects, ObjectNode propertiesNode) {
-        ObjectNode dataPropertiesNode = objectMapper.createObjectNode();
-        ArrayNode itemsNode = objectMapper.createArrayNode();
-
-        for (ValuedDataObject dObj : dataObjects) {
-            ObjectNode propertyItemNode = objectMapper.createObjectNode();
-            propertyItemNode.put(PROPERTY_DATA_ID, dObj.getId());
-            propertyItemNode.put(PROPERTY_DATA_NAME, dObj.getName());
-
-            String itemSubjectRefQName = dObj.getItemSubjectRef()
-                    .getStructureRef();
-
-            // remove namespace prefix
-            String dataType = itemSubjectRefQName.substring(itemSubjectRefQName
-                    .indexOf(':') + 1);
-            propertyItemNode.put(PROPERTY_DATA_TYPE, dataType);
-
-            Object dObjValue = dObj.getValue();
-            String value = null;
-
-            if (null == dObjValue) {
-                propertyItemNode.put(PROPERTY_DATA_VALUE, "");
-            } else {
-                if ("datetime".equals(dataType)) {
-                    value = sdf.format(dObjValue);
-                } else {
-                    value = dObjValue.toString();
-                }
-
-                propertyItemNode.put(PROPERTY_DATA_VALUE, value.toString());
-            }
-
-            itemsNode.add(propertyItemNode);
-        }
-
-        dataPropertiesNode.put("totalCount", itemsNode.size());
-        dataPropertiesNode.put(EDITOR_PROPERTIES_GENERAL_ITEMS, itemsNode);
-        propertiesNode.put("dataproperties", dataPropertiesNode);
-    }
-
-    private boolean isNotEmpty(String propertyName, JsonNode node) {
-        JsonNode value = node.get(propertyName);
-
-        if (value != null) {
-            return StringUtils.isNotEmpty(value.asText());
-        }
-
-        return false;
     }
 
     private void fillSubShapes(Map<String, SubProcess> subShapesMap,
@@ -886,6 +817,7 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         for (FlowElement flowElement : subProcess.getFlowElements()) {
             if (flowElement instanceof SubProcess) {
                 SubProcess childSubProcess = (SubProcess) flowElement;
+                subShapesMap.put(childSubProcess.getId(), subProcess);
                 fillSubShapes(subShapesMap, childSubProcess);
             } else {
                 subShapesMap.put(flowElement.getId(), subProcess);
@@ -893,14 +825,52 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         }
     }
 
-    private void postProcessElements(FlowElementsContainer process,
-            Collection<FlowElement> flowElementList) {
+    private void postProcessElements(FlowElementsContainer parentContainer,
+            Collection<FlowElement> flowElementList,
+            Map<String, JsonNode> edgeMap, BpmnModel bpmnModel,
+            Map<String, FlowWithContainer> allFlowMap,
+            List<Gateway> gatewayWithOrderList) {
         for (FlowElement flowElement : flowElementList) {
+            if (flowElement instanceof Event) {
+                Event event = (Event) flowElement;
+
+                if (CollectionUtils.isNotEmpty(event.getEventDefinitions())) {
+                    EventDefinition eventDef = event.getEventDefinitions().get(
+                            0);
+
+                    if (eventDef instanceof SignalEventDefinition) {
+                        SignalEventDefinition signalEventDef = (SignalEventDefinition) eventDef;
+
+                        if (StringUtils.isNotEmpty(signalEventDef
+                                .getSignalRef())) {
+                            if (bpmnModel.getSignal(signalEventDef
+                                    .getSignalRef()) == null) {
+                                bpmnModel.addSignal(new Signal(signalEventDef
+                                        .getSignalRef(), signalEventDef
+                                        .getSignalRef()));
+                            }
+                        }
+                    } else if (eventDef instanceof MessageEventDefinition) {
+                        MessageEventDefinition messageEventDef = (MessageEventDefinition) eventDef;
+
+                        if (StringUtils.isNotEmpty(messageEventDef
+                                .getMessageRef())) {
+                            if (bpmnModel.getMessage(messageEventDef
+                                    .getMessageRef()) == null) {
+                                bpmnModel.addMessage(new Message(
+                                        messageEventDef.getMessageRef(),
+                                        messageEventDef.getMessageRef(), null));
+                            }
+                        }
+                    }
+                }
+            }
+
             if (flowElement instanceof BoundaryEvent) {
                 BoundaryEvent boundaryEvent = (BoundaryEvent) flowElement;
                 Activity activity = retrieveAttachedRefObject(
                         boundaryEvent.getAttachedToRefId(),
-                        process.getFlowElements());
+                        parentContainer.getFlowElements());
 
                 if (activity == null) {
                     LOGGER.warn("Boundary event " + boundaryEvent.getId()
@@ -909,24 +879,65 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                     boundaryEvent.setAttachedToRef(activity);
                     activity.getBoundaryEvents().add(boundaryEvent);
                 }
+            } else if (flowElement instanceof Gateway) {
+                if (flowElement.getExtensionElements().containsKey(
+                        "EDITOR_FLOW_ORDER")) {
+                    gatewayWithOrderList.add((Gateway) flowElement);
+                }
             } else if (flowElement instanceof SubProcess) {
                 SubProcess subProcess = (SubProcess) flowElement;
-                postProcessElements(subProcess, subProcess.getFlowElements());
+                postProcessElements(subProcess, subProcess.getFlowElements(),
+                        edgeMap, bpmnModel, allFlowMap, gatewayWithOrderList);
             } else if (flowElement instanceof SequenceFlow) {
                 SequenceFlow sequenceFlow = (SequenceFlow) flowElement;
-                FlowElement sourceFlowElement = process
+                FlowElement sourceFlowElement = parentContainer
                         .getFlowElement(sequenceFlow.getSourceRef());
 
-                if (sourceFlowElement instanceof FlowNode) {
+                if ((sourceFlowElement != null)
+                        && sourceFlowElement instanceof FlowNode) {
+                    FlowWithContainer flowWithContainer = new FlowWithContainer(
+                            sequenceFlow, parentContainer);
+
+                    if ((sequenceFlow.getExtensionElements().get(
+                            "EDITOR_RESOURCEID") != null)
+                            && (sequenceFlow.getExtensionElements()
+                                    .get("EDITOR_RESOURCEID").size() > 0)) {
+                        allFlowMap.put(
+                                sequenceFlow.getExtensionElements()
+                                        .get("EDITOR_RESOURCEID").get(0)
+                                        .getElementText(), flowWithContainer);
+                        sequenceFlow.getExtensionElements().remove(
+                                "EDITOR_RESOURCEID");
+                    }
+
                     ((FlowNode) sourceFlowElement).getOutgoingFlows().add(
                             sequenceFlow);
+
+                    JsonNode edgeNode = edgeMap.get(sequenceFlow.getId());
+
+                    if (edgeNode != null) {
+                        boolean isDefault = JsonConverterUtil
+                                .getPropertyValueAsBoolean("defaultflow",
+                                        edgeNode);
+
+                        if (isDefault) {
+                            if (sourceFlowElement instanceof Activity) {
+                                ((Activity) sourceFlowElement)
+                                        .setDefaultFlow(sequenceFlow.getId());
+                            } else if (sourceFlowElement instanceof Gateway) {
+                                ((Gateway) sourceFlowElement)
+                                        .setDefaultFlow(sequenceFlow.getId());
+                            }
+                        }
+                    }
                 }
 
-                FlowElement targerFlowElement = process
+                FlowElement targetFlowElement = parentContainer
                         .getFlowElement(sequenceFlow.getTargetRef());
 
-                if (targerFlowElement instanceof FlowNode) {
-                    ((FlowNode) targerFlowElement).getIncomingFlows().add(
+                if ((targetFlowElement != null)
+                        && targetFlowElement instanceof FlowNode) {
+                    ((FlowNode) targetFlowElement).getIncomingFlows().add(
                             sequenceFlow);
                 }
             }
@@ -935,21 +946,29 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
     private Activity retrieveAttachedRefObject(String attachedToRefId,
             Collection<FlowElement> flowElementList) {
-        for (FlowElement flowElement : flowElementList) {
-            if (attachedToRefId.equals(flowElement.getId())) {
-                return (Activity) flowElement;
-            } else if (flowElement instanceof SubProcess) {
-                SubProcess subProcess = (SubProcess) flowElement;
-                Activity activity = retrieveAttachedRefObject(attachedToRefId,
-                        subProcess.getFlowElements());
+        Activity activity = null;
 
-                if (activity != null) {
-                    return activity;
+        if (StringUtils.isNotEmpty(attachedToRefId)) {
+            for (FlowElement flowElement : flowElementList) {
+                if (attachedToRefId.equals(flowElement.getId())) {
+                    activity = (Activity) flowElement;
+
+                    break;
+                } else if (flowElement instanceof SubProcess) {
+                    SubProcess subProcess = (SubProcess) flowElement;
+                    Activity retrievedActivity = retrieveAttachedRefObject(
+                            attachedToRefId, subProcess.getFlowElements());
+
+                    if (retrievedActivity != null) {
+                        activity = retrievedActivity;
+
+                        break;
+                    }
                 }
             }
         }
 
-        return null;
+        return activity;
     }
 
     private void readShapeDI(JsonNode objectNode, double parentX,
@@ -1022,77 +1041,27 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                 if (STENCIL_SUB_PROCESS.equals(stencilId)) {
                     filterAllEdges(childNode, edgeMap, sourceAndTargetMap,
                             shapeMap, sourceRefMap);
-                } else if (STENCIL_SEQUENCE_FLOW.equals(stencilId)) {
+                } else if (STENCIL_SEQUENCE_FLOW.equals(stencilId)
+                        || STENCIL_ASSOCIATION.equals(stencilId)) {
                     String childEdgeId = BpmnJsonConverterUtil
                             .getElementId(childNode);
-                    String targetRefId = childNode.get("target")
-                            .get(EDITOR_SHAPE_ID).asText();
-                    List<JsonNode> sourceAndTargetList = new ArrayList<JsonNode>();
-                    sourceAndTargetList.add(sourceRefMap.get(childNode.get(
-                            EDITOR_SHAPE_ID).asText()));
-                    sourceAndTargetList.add(shapeMap.get(targetRefId));
+                    JsonNode targetNode = childNode.get("target");
+
+                    if ((targetNode != null) && (targetNode.isNull() == false)) {
+                        String targetRefId = targetNode.get(EDITOR_SHAPE_ID)
+                                .asText();
+                        List<JsonNode> sourceAndTargetList = new ArrayList<JsonNode>();
+                        sourceAndTargetList.add(sourceRefMap.get(childNode.get(
+                                EDITOR_SHAPE_ID).asText()));
+                        sourceAndTargetList.add(shapeMap.get(targetRefId));
+                        sourceAndTargetMap
+                                .put(childEdgeId, sourceAndTargetList);
+                    }
 
                     edgeMap.put(childEdgeId, childNode);
-                    sourceAndTargetMap.put(childEdgeId, sourceAndTargetList);
                 }
             }
         }
-    }
-
-    public void convertListenersToJson(List<EventListener> eventListeners,
-            ObjectNode propertiesNode) {
-        ObjectNode listenersNode = objectMapper.createObjectNode();
-        ArrayNode itemsNode = objectMapper.createArrayNode();
-
-        for (EventListener listener : eventListeners) {
-            ObjectNode propertyItemNode = objectMapper.createObjectNode();
-
-            propertyItemNode.put(PROPERTY_EVENT_LISTENER_EVENTS,
-                    listener.getEvents());
-            propertyItemNode.put(PROPERTY_EVENT_LISTENER_ENTITY_TYPE,
-                    listener.getEntityType());
-
-            if (ImplementationType.IMPLEMENTATION_TYPE_CLASS.equals(listener
-                    .getImplementationType())) {
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_CLASS,
-                        listener.getImplementation());
-            } else if (ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION
-                    .equals(listener.getImplementationType())) {
-                propertyItemNode.put(
-                        PROPERTY_EVENT_LISTENER_DELEGATEEXPRESSION,
-                        listener.getImplementation());
-            } else if (ImplementationType.IMPLEMENTATION_TYPE_THROW_SIGNAL_EVENT
-                    .equals(listener.getImplementationType())) {
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_EVENT,
-                        PROPERTY_EVENT_LISTENER_THROW_SIGNAL);
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_REFERENCE,
-                        listener.getImplementation());
-            } else if (ImplementationType.IMPLEMENTATION_TYPE_THROW_GLOBAL_SIGNAL_EVENT
-                    .equals(listener.getImplementationType())) {
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_EVENT,
-                        PROPERTY_EVENT_LISTENER_THROW_GLOBAL_SIGNAL);
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_REFERENCE,
-                        listener.getImplementation());
-            } else if (ImplementationType.IMPLEMENTATION_TYPE_THROW_MESSAGE_EVENT
-                    .equals(listener.getImplementationType())) {
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_EVENT,
-                        PROPERTY_EVENT_LISTENER_THROW_MESSAGE);
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_REFERENCE,
-                        listener.getImplementation());
-            } else if (ImplementationType.IMPLEMENTATION_TYPE_THROW_ERROR_EVENT
-                    .equals(listener.getImplementationType())) {
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_EVENT,
-                        PROPERTY_EVENT_LISTENER_THROW_ERROR);
-                propertyItemNode.put(PROPERTY_EVENT_LISTENER_THROW_REFERENCE,
-                        listener.getImplementation());
-            }
-
-            itemsNode.add(propertyItemNode);
-        }
-
-        listenersNode.put("totalCount", itemsNode.size());
-        listenersNode.put(EDITOR_PROPERTIES_GENERAL_ITEMS, itemsNode);
-        propertiesNode.put(PROPERTY_EVENT_LISTENERS, listenersNode);
     }
 
     private void readEdgeDI(Map<String, JsonNode> edgeMap,
@@ -1101,8 +1070,14 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             JsonNode edgeNode = edgeMap.get(edgeId);
             List<JsonNode> sourceAndTargetList = sourceAndTargetMap.get(edgeId);
 
-            JsonNode sourceRefNode = sourceAndTargetList.get(0);
-            JsonNode targetRefNode = sourceAndTargetList.get(1);
+            JsonNode sourceRefNode = null;
+            JsonNode targetRefNode = null;
+
+            if ((sourceAndTargetList != null)
+                    && (sourceAndTargetList.size() > 1)) {
+                sourceRefNode = sourceAndTargetList.get(0);
+                targetRefNode = sourceAndTargetList.get(1);
+            }
 
             if (sourceRefNode == null) {
                 LOGGER.info("Skipping edge {} because source ref is null",
@@ -1120,9 +1095,9 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
             JsonNode dockersNode = edgeNode.get(EDITOR_DOCKERS);
             double sourceDockersX = dockersNode.get(0).get(EDITOR_BOUNDS_X)
-                    .doubleValue();
+                    .asDouble();
             double sourceDockersY = dockersNode.get(0).get(EDITOR_BOUNDS_Y)
-                    .doubleValue();
+                    .asDouble();
 
             GraphicInfo sourceInfo = bpmnModel
                     .getGraphicInfo(BpmnJsonConverterUtil
@@ -1131,15 +1106,6 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                     .getGraphicInfo(BpmnJsonConverterUtil
                             .getElementId(targetRefNode));
 
-            /*
-             * JsonNode sourceRefBoundsNode = sourceRefNode.get(EDITOR_BOUNDS); BoundsLocation
-             * sourceRefUpperLeftLocation = getLocation(EDITOR_BOUNDS_UPPER_LEFT, sourceRefBoundsNode); BoundsLocation
-             * sourceRefLowerRightLocation = getLocation(EDITOR_BOUNDS_LOWER_RIGHT, sourceRefBoundsNode);
-             * 
-             * JsonNode targetRefBoundsNode = targetRefNode.get(EDITOR_BOUNDS); BoundsLocation
-             * targetRefUpperLeftLocation = getLocation(EDITOR_BOUNDS_UPPER_LEFT, targetRefBoundsNode); BoundsLocation
-             * targetRefLowerRightLocation = getLocation(EDITOR_BOUNDS_LOWER_RIGHT, targetRefBoundsNode);
-             */
             double sourceRefLineX = sourceInfo.getX() + sourceDockersX;
             double sourceRefLineY = sourceInfo.getY() + sourceDockersY;
 
@@ -1147,9 +1113,9 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             double nextPointInLineY;
 
             nextPointInLineX = dockersNode.get(1).get(EDITOR_BOUNDS_X)
-                    .doubleValue();
+                    .asDouble();
             nextPointInLineY = dockersNode.get(1).get(EDITOR_BOUNDS_Y)
-                    .doubleValue();
+                    .asDouble();
 
             if (dockersNode.size() == 2) {
                 nextPointInLineX += targetInfo.getX();
@@ -1166,32 +1132,29 @@ public class BpmnJsonConverter implements EditorJsonConstants,
 
             List<GraphicInfo> graphicInfoList = new ArrayList<GraphicInfo>();
 
+            AbstractContinuousCurve2D source2D = null;
+
             if (DI_CIRCLES.contains(sourceRefStencilId)) {
-                Circle2D eventCircle = new Circle2D(sourceInfo.getX()
-                        + sourceDockersX, sourceInfo.getY() + sourceDockersY,
-                        sourceDockersX);
-
-                Collection<Point2D> intersections = eventCircle
-                        .intersections(firstLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+                source2D = new Circle2D(sourceInfo.getX() + sourceDockersX,
+                        sourceInfo.getY() + sourceDockersY, sourceDockersX);
             } else if (DI_RECTANGLES.contains(sourceRefStencilId)) {
-                Polyline2D rectangle = createRectangle(sourceInfo);
-
-                Collection<Point2D> intersections = rectangle
-                        .intersections(firstLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+                source2D = createRectangle(sourceInfo);
             } else if (DI_GATEWAY.contains(sourceRefStencilId)) {
-                Polyline2D gatewayRectangle = createGateway(sourceInfo);
+                source2D = createGateway(sourceInfo);
+            }
 
-                Collection<Point2D> intersections = gatewayRectangle
+            if (source2D != null) {
+                Collection<Point2D> intersections = source2D
                         .intersections(firstLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+
+                if ((intersections != null) && (intersections.size() > 0)) {
+                    Point2D intersection = intersections.iterator().next();
+                    graphicInfoList.add(createGraphicInfo(intersection.x(),
+                            intersection.y()));
+                } else {
+                    graphicInfoList.add(createGraphicInfo(sourceRefLineX,
+                            sourceRefLineY));
+                }
             }
 
             Line2D lastLine = null;
@@ -1199,21 +1162,21 @@ public class BpmnJsonConverter implements EditorJsonConstants,
             if (dockersNode.size() > 2) {
                 for (int i = 1; i < (dockersNode.size() - 1); i++) {
                     double x = dockersNode.get(i).get(EDITOR_BOUNDS_X)
-                            .doubleValue();
+                            .asDouble();
                     double y = dockersNode.get(i).get(EDITOR_BOUNDS_Y)
-                            .doubleValue();
+                            .asDouble();
                     graphicInfoList.add(createGraphicInfo(x, y));
                 }
 
                 double startLastLineX = dockersNode.get(dockersNode.size() - 2)
-                        .get(EDITOR_BOUNDS_X).doubleValue();
+                        .get(EDITOR_BOUNDS_X).asDouble();
                 double startLastLineY = dockersNode.get(dockersNode.size() - 2)
-                        .get(EDITOR_BOUNDS_Y).doubleValue();
+                        .get(EDITOR_BOUNDS_Y).asDouble();
 
                 double endLastLineX = dockersNode.get(dockersNode.size() - 1)
-                        .get(EDITOR_BOUNDS_X).doubleValue();
+                        .get(EDITOR_BOUNDS_X).asDouble();
                 double endLastLineY = dockersNode.get(dockersNode.size() - 1)
-                        .get(EDITOR_BOUNDS_Y).doubleValue();
+                        .get(EDITOR_BOUNDS_Y).asDouble();
 
                 endLastLineX += targetInfo.getX();
                 endLastLineY += targetInfo.getY();
@@ -1224,45 +1187,44 @@ public class BpmnJsonConverter implements EditorJsonConstants,
                 lastLine = firstLine;
             }
 
-            if (DI_RECTANGLES.contains(targetRefStencilId)) {
-                Polyline2D rectangle = createRectangle(targetInfo);
+            AbstractContinuousCurve2D target2D = null;
 
-                Collection<Point2D> intersections = rectangle
-                        .intersections(lastLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+            if (DI_RECTANGLES.contains(targetRefStencilId)) {
+                target2D = createRectangle(targetInfo);
             } else if (DI_CIRCLES.contains(targetRefStencilId)) {
                 double targetDockersX = dockersNode.get(dockersNode.size() - 1)
-                        .get(EDITOR_BOUNDS_X).doubleValue();
+                        .get(EDITOR_BOUNDS_X).asDouble();
                 double targetDockersY = dockersNode.get(dockersNode.size() - 1)
-                        .get(EDITOR_BOUNDS_Y).doubleValue();
+                        .get(EDITOR_BOUNDS_Y).asDouble();
 
-                Circle2D eventCircle = new Circle2D(targetInfo.getX()
-                        + targetDockersX, targetInfo.getY() + targetDockersY,
-                        targetDockersX);
-
-                Collection<Point2D> intersections = eventCircle
-                        .intersections(lastLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+                target2D = new Circle2D(targetInfo.getX() + targetDockersX,
+                        targetInfo.getY() + targetDockersY, targetDockersX);
             } else if (DI_GATEWAY.contains(targetRefStencilId)) {
-                Polyline2D gatewayRectangle = createGateway(targetInfo);
+                target2D = createGateway(targetInfo);
+            }
 
-                Collection<Point2D> intersections = gatewayRectangle
+            if (target2D != null) {
+                Collection<Point2D> intersections = target2D
                         .intersections(lastLine);
-                Point2D intersection = intersections.iterator().next();
-                graphicInfoList.add(createGraphicInfo(intersection.x(),
-                        intersection.y()));
+
+                if ((intersections != null) && (intersections.size() > 0)) {
+                    Point2D intersection = intersections.iterator().next();
+                    graphicInfoList.add(createGraphicInfo(intersection.x(),
+                            intersection.y()));
+                } else {
+                    graphicInfoList.add(createGraphicInfo(lastLine.getPoint2()
+                            .x(), lastLine.getPoint2().y()));
+                }
             }
 
             bpmnModel.addFlowGraphicInfoList(edgeId, graphicInfoList);
 
             // if sequence has a name, just add a label graphic info
             if (!"".equals(edgeNode.get("properties").get("name"))) {
-                bpmnModel
-                        .addLabelGraphicInfo(edgeId, createGraphicInfo(0D, 0D));
+                bpmnModel.addLabelGraphicInfo(
+                        edgeId,
+                        createGraphicInfo(graphicInfoList.get(0).getX(),
+                                graphicInfoList.get(0).getY()));
             }
         }
     }
@@ -1300,5 +1262,32 @@ public class BpmnJsonConverter implements EditorJsonConstants,
         graphicInfo.setY(y);
 
         return graphicInfo;
+    }
+
+    class FlowWithContainer {
+        protected SequenceFlow sequenceFlow;
+        protected FlowElementsContainer flowContainer;
+
+        public FlowWithContainer(SequenceFlow sequenceFlow,
+                FlowElementsContainer flowContainer) {
+            this.sequenceFlow = sequenceFlow;
+            this.flowContainer = flowContainer;
+        }
+
+        public SequenceFlow getSequenceFlow() {
+            return sequenceFlow;
+        }
+
+        public void setSequenceFlow(SequenceFlow sequenceFlow) {
+            this.sequenceFlow = sequenceFlow;
+        }
+
+        public FlowElementsContainer getFlowContainer() {
+            return flowContainer;
+        }
+
+        public void setFlowContainer(FlowElementsContainer flowContainer) {
+            this.flowContainer = flowContainer;
+        }
     }
 }

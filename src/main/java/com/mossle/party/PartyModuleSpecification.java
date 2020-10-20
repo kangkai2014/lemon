@@ -1,6 +1,6 @@
 package com.mossle.party;
 
-import com.mossle.ext.dbmigrate.ModuleSpecification;
+import com.mossle.core.dbmigrate.ModuleSpecification;
 
 import org.springframework.beans.factory.annotation.Value;
 
@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class PartyModuleSpecification implements ModuleSpecification {
+    private static final String MODULE_NAME = "party";
+    private static final String MODULE_NAME_UPPER = MODULE_NAME.toUpperCase();
     private String type;
     private boolean enabled;
     private boolean initData;
@@ -17,11 +19,11 @@ public class PartyModuleSpecification implements ModuleSpecification {
     }
 
     public String getSchemaTable() {
-        return "SCHEMA_VERSION_PARTY";
+        return PREFIX + MODULE_NAME_UPPER;
     }
 
     public String getSchemaLocation() {
-        return "dbmigrate." + type + ".party";
+        return "dbmigrate." + type + "." + MODULE_NAME;
     }
 
     public boolean isInitData() {
@@ -29,11 +31,11 @@ public class PartyModuleSpecification implements ModuleSpecification {
     }
 
     public String getDataTable() {
-        return "SCHEMA_VERSION_DATA_PARTY";
+        return PREFIX + "DATA_" + MODULE_NAME_UPPER;
     }
 
     public String getDataLocation() {
-        return "dbmigrate." + type + ".data_party";
+        return "dbmigrate." + type + ".data_" + MODULE_NAME;
     }
 
     @Value("${application.database.type}")
@@ -41,12 +43,12 @@ public class PartyModuleSpecification implements ModuleSpecification {
         this.type = type;
     }
 
-    @Value("${party.dbmigrate.enabled}")
+    @Value("${" + MODULE_NAME + ".dbmigrate.enabled:false}")
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
     }
 
-    @Value("${party.dbmigrate.initData}")
+    @Value("${" + MODULE_NAME + ".dbmigrate.initData:false}")
     public void setInitData(boolean initData) {
         this.initData = initData;
     }
